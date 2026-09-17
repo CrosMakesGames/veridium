@@ -1,44 +1,34 @@
-// ==========================================
-// INSTANCE HOST DATA
-// Its your instance - customize it how you want.
-// This is a JavaScript file, so comments are allowed.
-// ==========================================
-
 window.VERIDIUM_HOST_DATA = {
-    // ==========================================
-    // INSTANCE HOST DATA
     // Its your instance - customize it how you want.
-    // ==========================================
 
     // The font the INSTANCE HOST text uses in the footer.
-    // "Veridium title font" is the default. Set any font name to override it.
+    // "Veridium title font" is the default. 
     "instanceHostFont": "Veridium title font",
-
-    // What the footer says after "INSTANCE HOST:"
     "instanceHostText": "CrosMakesGames",
 
-    // Set to true and the INSTANCE HOST text becomes a link.
-    // Clicking it opens "instanceHostLink" in a new window.
+    // Set to true and the INSTANCE HOST text becomes a link to the instanceHostLink.
     "instanceHostClickable": true,
-
-    // The link that opens when the INSTANCE HOST text is clicked.
     "instanceHostLink": "https://crosmakesgames.com",
 
-    // Custom favicon - put an image link here, like "https://yoursite.com/icon.png".
-    // Or set to true and put the link in "customFaviconLink" below instead.
-    // Leave empty or false for the default Veridium favicon.
-    "customFavicon": "",
 
+    "customFavicon": "false",
     // Only used when "customFavicon" is set to true.
+    // If you change the color scheme it will auto update the favicon.
     "customFaviconLink": "",
 
-    // Custom color scheme - put any hex color here (like "#FF5500").
+    // Custom color scheme put any color here (like #FF5500 for orange).
     // Leave empty for the default Veridium purple (#8B5CF6).
     "customColorScheme": "",
 
-    // Footer links - up to 3. Each needs a "title" and a "url".
-    // They show up in the footer next to the INSTANCE HOST info.
-    // By default only the first one is filled in (Discord).
+    // Navbar Layout - the buttons that show up in the navbar from left to right. You can rearrange or remove but theser are your options:
+    "navbarLayout": [
+        "Popular",
+        "Featured",
+        "Live Sports"
+    ],
+
+    // Up to footer links. Each needs a "title" and a "url".
+    // Note that you can change links but it will always say crosmakesgames.com to the side. You could remove it in the HTML but please don't.
     "footerLinks": [
         {
             "title": "Discord",
@@ -78,7 +68,11 @@ window.VERIDIUM_HOST_DATA = {
         { "id": 246, "type": "tv" },         // Avatar: The Last Airbender
         { "id": 1339713, "type": "movie" }, // Obsession
         { "id": 1083381, "type": "movie" }, // Backrooms
-        { "id": 604079, "type": "movie" }   // The Long Walk
+        { "id": 604079, "type": "movie" },   // The Long Walk
+        { "id": 936075, "type": "movie" },         // Michael
+        { "id": 37799, "type": "movie" }, // The Social Network
+        { "id": 13, "type": "movie" }, // Forrest Gump
+        { "id": 424694, "type": "movie" },   // Bohemian Rhapsody
     ]
 };
 

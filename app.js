@@ -698,6 +698,10 @@ async function initHome() {
             }
         }
         const featured = await ShowService.fetchFeatured();
+        const heroContainer = document.getElementById('hero-container');
+        if (heroContainer && featured.length) {
+            renderHero(heroContainer, featured[Math.floor(Math.random() * featured.length)]);
+        }
         if (featuredGrid) renderGrid(featuredGrid, featured);
     } catch (err) {
         if (featuredGrid) {
@@ -1037,10 +1041,12 @@ document.addEventListener('DOMContentLoaded', function () {
     initParticles();
     const page = document.body.getAttribute('data-page');
     loadHostData().then(applyHostData);
+    renderNavbar();
     if (page === 'home') initHome();
     else if (page === 'popular') initPopular();
     else if (page === 'featured') initFeatured();
     else if (page === 'show') initShow();
+    else if (page === 'livesports') initLiveSports();
 });
 
 window.addEventListener('pageshow', function (event) {
@@ -1048,3 +1054,298 @@ window.addEventListener('pageshow', function (event) {
         initHome();
     }
 });
+
+// ============ NAVBAR (bubble layout, driven by instance-host-data.js) ============
+
+const NAV_ITEMS = {
+    'Popular': { href: 'popular.html', page: 'popular' },
+    'Featured': { href: 'featured.html', page: 'featured' },
+    'Live Sports': { href: 'livesports.html', page: 'livesports' }
+};
+const NAV_DEFAULT_LAYOUT = ['Popular', 'Featured', 'Live Sports'];
+
+function renderNavbar() {
+    const navRight = document.getElementById('nav-right');
+    if (!navRight) return;
+    const raw = (window.VERIDIUM_HOST_DATA && Array.isArray(window.VERIDIUM_HOST_DATA.navbarLayout))
+        ? window.VERIDIUM_HOST_DATA.navbarLayout
+        : NAV_DEFAULT_LAYOUT;
+    const layout = raw.filter(function (name) {
+        return typeof name === 'string' && Object.prototype.hasOwnProperty.call(NAV_ITEMS, name.trim());
+    }).map(function (name) { return name.trim(); });
+
+    const currentPage = document.body.getAttribute('data-page');
+    navRight.innerHTML = '';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'nav-bubble';
+    const indicator = document.createElement('div');
+    indicator.className = 'nav-bubble-indicator';
+    bubble.appendChild(indicator);
+
+    const links = [];
+    layout.forEach(function (name) {
+        const item = NAV_ITEMS[name];
+        const a = document.createElement('a');
+        a.className = 'nav-item' + (currentPage === item.page ? ' active' : '');
+        a.href = item.href;
+        a.textContent = name.toUpperCase();
+        bubble.appendChild(a);
+        links.push(a);
+    });
+    navRight.appendChild(bubble);
+
+    const activeEl = bubble.querySelector('.nav-item.active');
+    function moveIndicator(el) {
+        if (!el) {
+            indicator.classList.remove('visible');
+            return;
+        }
+        indicator.classList.add('visible');
+        indicator.style.width = el.offsetWidth + 'px';
+        indicator.style.transform = 'translateX(' + el.offsetLeft + 'px)';
+    }
+    links.forEach(function (a) {
+        a.addEventListener('mouseenter', function () { moveIndicator(a); });
+    });
+    bubble.addEventListener('mouseleave', function () { moveIndicator(activeEl); });
+    function settle() { moveIndicator(activeEl); }
+    window.addEventListener('load', settle);
+    window.addEventListener('resize', settle);
+    requestAnimationFrame(function () { setTimeout(settle, 80); });
+}
+
+// ============ LIVE SPORTS (streamed.pk) ============
+
+const STREAMED_API = 'https://streamed.pk/api';
+const lsState = { sports: [], matches: [], sportId: 'live', match: null, streams: [], streamIndex: 0 };
+
+function lsFetchJSON(url) {
+    return fetch(url).then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+    });
+}
+
+function lsBadgeUrl(id) {
+    return STREAMED_API + '/images/badge/' + encodeURIComponent(id) + '.webp';
+}
+
+function lsEscape(value) { return escapeHtml(value); }
+
+function lsFormatTime(ts) {
+    const d = new Date(Number(ts));
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+async function initLiveSports() {
+    const root = document.getElementById('livesports-root');
+    if (!root) return;
+    root.innerHTML = '<div class="ad-warning">ACCESSING DATA...</div>';
+    try {
+        const sports = await lsFetchJSON(STREAMED_API + '/sports');
+        lsState.sports = (Array.isArray(sports) ? sports : []).filter(function (sp) { return sp && sp.id && sp.name; });
+    } catch (err) {
+        lsState.sports = [];
+    }
+    lsState.match = null;
+    lsState.streams = [];
+    renderLiveSportsPage();
+    loadMatches(lsState.sportId);
+}
+
+function renderLiveSportsPage() {
+    const root = document.getElementById('livesports-root');
+    if (!root) return;
+
+    const sportOptions = '<option value="live"' + (lsState.sportId === 'live' ? ' selected' : '') + '>LIVE NOW</option>' +
+        lsState.sports.map(function (sp) {
+            return '<option value="' + lsEscape(sp.id) + '"' + (lsState.sportId === sp.id ? ' selected' : '') + '>' + lsEscape(sp.name.toUpperCase()) + '</option>';
+        }).join('');
+
+    root.innerHTML =
+        '<a href="index.html" class="back-link">&lt; BACK</a>' +
+
+        '<div class="ad-warning" style="margin-top:0;">' +
+            'Live sports streams are embedded from outside sources and may include ads. ' +
+            'Use an ad blocker for the best experience. ' +
+            '<a href="https://ublockorigin.com/" target="_blank" rel="noopener noreferrer">Get uBlock Origin</a>' +
+        '</div>' +
+
+        '<div class="details-layout">' +
+            '<div>' +
+                '<div class="video-container">' +
+                    '<iframe id="video-player" src="about:blank" frameborder="0" allowfullscreen ' +
+                        'allow="autoplay; fullscreen; encrypted-media; picture-in-picture" ' +
+                        'referrerpolicy="strict-origin-when-cross-origin"></iframe>' +
+                '</div>' +
+                '<div class="player-buttons">' +
+                    '<button type="button" class="btn-secondary" onclick="playerFullscreen()">FULLSCREEN</button>' +
+                    '<button type="button" class="btn-secondary" onclick="lsRefresh()">REFRESH</button>' +
+                    '<button type="button" class="btn-secondary" onclick="lsOpenLink()">OPEN LINK</button>' +
+                    '<div class="server-select-wrap">' +
+                        '<span class="server-select-label">STREAM SELECTOR:</span>' +
+                        '<select id="stream-select" class="server-select" onchange="switchLiveStream(parseInt(this.value, 10))">' +
+                            '<option value="0">SELECT A MATCH</option>' +
+                        '</select>' +
+                    '</div>' +
+                '</div>' +
+
+                '<div id="ls-match-info" class="ls-match-info"></div>' +
+            '</div>' +
+            '<div class="episode-list-container">' +
+                '<div class="season-header">' +
+                    '<span>MATCHES</span>' +
+                    '<select id="sport-select" class="season-select" onchange="changeSport(this.value)">' + sportOptions + '</select>' +
+                '</div>' +
+                '<div id="matches-scroll" class="episodes-scroll sport-match-list"></div>' +
+            '</div>' +
+        '</div>';
+}
+
+async function loadMatches(sportId) {
+    lsState.sportId = sportId || 'live';
+    const listEl = document.getElementById('matches-scroll');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="ad-warning">LOADING...</div>';
+    try {
+        const endpoint = lsState.sportId === 'live'
+            ? '/matches/live'
+            : '/matches/' + encodeURIComponent(lsState.sportId);
+        const matches = await lsFetchJSON(STREAMED_API + endpoint);
+        lsState.matches = Array.isArray(matches) ? matches : [];
+        renderMatchList();
+    } catch (err) {
+        lsState.matches = [];
+        listEl.innerHTML = '<div class="ad-warning">Failed to load matches. Refresh the page.</div>';
+    }
+}
+
+function changeSport(sportId) {
+    loadMatches(sportId);
+}
+
+function renderMatchList() {
+    const listEl = document.getElementById('matches-scroll');
+    if (!listEl) return;
+    if (!lsState.matches.length) {
+        listEl.innerHTML = '<div class="ad-warning">No matches found. Check back later.</div>';
+        return;
+    }
+    const now = Date.now();
+    const sorted = lsState.matches.slice().sort(function (a, b) { return (a.date || 0) - (b.date || 0); });
+    listEl.innerHTML = sorted.map(function (m, idx) {
+        const isLiveRow = lsState.sportId === 'live';
+        const active = lsState.match && lsState.match.id === m.id;
+        const home = m.teams && m.teams.home;
+        const away = m.teams && m.teams.away;
+        let teamsHtml = '';
+        if (home || away) {
+            teamsHtml =
+                '<div class="match-team-line">' +
+                    (home ? '<img src="' + lsEscape(lsBadgeUrl(home.badge)) + '" onerror="this.style.display=\'none\'">' : '') +
+                    '<span>' + lsEscape(home ? home.name : '') + '</span>' +
+                '</div>' +
+                '<div class="match-team-line">' +
+                    (away ? '<img src="' + lsEscape(lsBadgeUrl(away.badge)) + '" onerror="this.style.display=\'none\'">' : '') +
+                    '<span>' + lsEscape(away ? away.name : '') + '</span>' +
+                '</div>';
+        } else {
+            teamsHtml = '<div class="match-team-line"><span>' + lsEscape(m.title || 'Match') + '</span></div>';
+        }
+        return '<div class="match-row' + (isLiveRow ? ' is-live' : '') + (active ? ' active' : '') + '" onclick="selectMatch(' + idx + ')">' +
+            '<div class="match-teams">' + teamsHtml + '</div>' +
+            '<div class="match-time">' +
+                (isLiveRow ? '<span class="match-live-dot"></span>LIVE' : lsEscape(lsFormatTime(m.date))) +
+            '</div>' +
+        '</div>';
+    }).join('');
+}
+
+async function selectMatch(idx) {
+    const match = lsState.matches[idx];
+    if (!match) return;
+    lsState.match = match;
+    lsState.streams = [];
+    lsState.streamIndex = 0;
+    renderMatchList();
+    renderMatchInfo(match);
+
+    const infoEl = document.getElementById('ls-match-info');
+    const selectEl = document.getElementById('stream-select');
+    if (selectEl) selectEl.innerHTML = '<option value="0">LOADING STREAMS...</option>';
+    setPlayerSrc('about:blank');
+    if (infoEl) infoEl.insertAdjacentHTML('beforeend', '<div class="ad-warning" id="ls-stream-warning">LOADING STREAMS...</div>');
+
+    let streams = [];
+    const sources = (match.sources || []).slice();
+    for (let i = 0; i < sources.length; i++) {
+        try {
+            const res = await lsFetchJSON(STREAMED_API + '/stream/' + encodeURIComponent(sources[i].source) + '/' + encodeURIComponent(sources[i].id));
+            if (Array.isArray(res) && res.length) {
+                streams = res;
+                break;
+            }
+        } catch (err) { }
+    }
+    lsState.streams = streams;
+    const warnEl = document.getElementById('ls-stream-warning');
+    if (warnEl) warnEl.remove();
+
+    if (selectEl) {
+        if (!streams.length) {
+            selectEl.innerHTML = '<option value="0">NO STREAMS</option>';
+        } else {
+            selectEl.innerHTML = streams.map(function (st, i) {
+                return '<option value="' + i + '">STREAM ' + st.streamNo + ' - ' + lsEscape((st.language || 'UNKNOWN').toUpperCase()) + (st.hd ? ' (HD)' : '') + '</option>';
+            }).join('');
+        }
+    }
+    if (streams.length) {
+        switchLiveStream(0);
+    } else if (infoEl) {
+        infoEl.insertAdjacentHTML('beforeend', '<div class="ad-warning">No streams available for this match yet. Try another source or check back later.</div>');
+    }
+}
+
+function renderMatchInfo(match) {
+    const infoEl = document.getElementById('ls-match-info');
+    if (!infoEl || !match) return;
+    const home = match.teams && match.teams.home;
+    const away = match.teams && match.teams.away;
+    const isLiveRow = lsState.sportId === 'live';
+    infoEl.innerHTML =
+        '<div class="ls-match-headline">' +
+            (home ? '<img src="' + lsEscape(lsBadgeUrl(home.badge)) + '" onerror="this.style.display=\'none\'">' : '') +
+            '<h1 class="ls-match-title">' + lsEscape(match.title || 'Live Match') + '</h1>' +
+            (away ? '<img src="' + lsEscape(lsBadgeUrl(away.badge)) + '" onerror="this.style.display=\'none\'">' : '') +
+        '</div>' +
+        '<div class="ls-match-meta">' +
+            (isLiveRow ? '<span class="match-live-dot"></span><span>LIVE</span><span>|</span>' : '') +
+            '<span>' + lsEscape((match.category || '').toUpperCase()) + '</span>' +
+            '<span>|</span>' +
+            '<span>' + lsEscape(lsFormatTime(match.date)) + '</span>' +
+        '</div>';
+}
+
+function lsCurrentEmbedUrl() {
+    const st = lsState.streams[lsState.streamIndex];
+    return st ? st.embedUrl : '';
+}
+
+function switchLiveStream(i) {
+    lsState.streamIndex = Number(i) || 0;
+    const url = lsCurrentEmbedUrl();
+    if (url) setPlayerSrc(url);
+}
+
+function lsRefresh() {
+    const url = lsCurrentEmbedUrl();
+    if (url) setPlayerSrc(url);
+}
+
+function lsOpenLink() {
+    const url = lsCurrentEmbedUrl();
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+}
