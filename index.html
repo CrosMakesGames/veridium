@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Veridium</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Cpath d='M8 6 L16 26 L24 6 L20 6 L16 17 L12 6 Z' fill='%238B5CF6'/%3E%3C/svg%3E">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100;300;400;600&family=JetBrains+Mono:wght@300;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="instance-host-data.js"></script>
+    <script src="servers.js"></script>
+</head>
+<body data-page="home">
+
+<canvas id="particle-canvas"></canvas>
+
+<div id="site-content">
+
+    <nav class="hud-nav">
+        <a class="nav-logo" href="index.html"><span>V</span>ERIDIUM</a>
+        <div class="nav-right" id="nav-right"></div>
+    </nav>
+
+    <div class="content-container">
+
+        <div id="hero-container"></div>
+
+        <section id="continue-watching-section" class="content-section" style="display:none">
+            <div class="section-head">
+                <h2 class="section-heading">CONTINUE WATCHING</h2>
+                <div class="section-pager" id="cw-pager"></div>
+            </div>
+            <div id="continue-watching-grid" class="tv-grid"></div>
+        </section>
+
+        <section id="recommended-section" class="content-section" style="display:none">
+            <div class="section-head">
+                <h2 class="section-heading">RECOMMENDED</h2>
+                <div class="section-pager" id="rec-pager"></div>
+            </div>
+            <div id="recommended-home-grid" class="tv-grid"></div>
+        </section>
+
+        <section id="featured-section" class="content-section">
+            <h2 class="section-heading">FEATURED</h2>
+            <div id="featured-grid" class="tv-grid"></div>
+        </section>
+
+    </div>
+
+    <footer class="site-footer">
+        <div class="site-footer-inner">
+            <div class="site-footer-brand">
+                <div class="footer-logo"><span>V</span>ERIDIUM</div>
+            </div>
+            <div class="site-footer-links" id="footer-links"></div>
+            <div class="instance-host">
+                INSTANCE HOST: <span>CrosMakesGames</span>
+            </div>
+        </div>
+    </footer>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
