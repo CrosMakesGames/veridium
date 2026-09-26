@@ -109,6 +109,8 @@ const HOST_DATA_FALLBACK = {
     siteTitle: 'Veridium',
     useCustomTopPoster: false,
     topPoster: { id: 1434, type: 'tv' },
+    superFeaturedShows: [],
+    superFeaturedRotationMs: 8000,
     instanceHostFont: 'Veridium title font',
     instanceHostText: 'CrosMakesGames',
     instanceHostClickable: true,
@@ -173,6 +175,10 @@ function loadHostData() {
                     : HOST_DATA_FALLBACK.siteTitle,
                 useCustomTopPoster: data.useCustomTopPoster === true,
                 topPoster: data.topPoster || null,
+                superFeaturedShows: (Array.isArray(data.superFeaturedShows) ? data.superFeaturedShows : [])
+                    .filter(function (item) { return item && Number(item.id) > 0 && (item.type === 'tv' || item.type === 'movie'); })
+                    .slice(0, 10),
+                superFeaturedRotationMs: Number(data.superFeaturedRotationMs) >= 2000 ? Number(data.superFeaturedRotationMs) : HOST_DATA_FALLBACK.superFeaturedRotationMs,
                 instanceHostFont: data.instanceHostFont || HOST_DATA_FALLBACK.instanceHostFont,
                 instanceHostText: data.instanceHostText || HOST_DATA_FALLBACK.instanceHostText,
                 instanceHostClickable: !!data.instanceHostClickable,
@@ -184,7 +190,7 @@ function loadHostData() {
                 featuredShows: (data.featuredShows || [])
                     .filter(item => item && item.id && (item.type === 'tv' || item.type === 'movie'))
             };
-            const finalData = merged.featuredShows.length ? merged : HOST_DATA_FALLBACK;
+            const finalData = (merged.featuredShows.length || merged.superFeaturedShows.length) ? merged : HOST_DATA_FALLBACK;
             window.__veridiumHostData = finalData;
             return finalData;
         });
@@ -359,7 +365,7 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
 
 // TMDB details cache: the featured list is static, so after one good load
 // every page visit is instant and costs zero API calls (no rate-limit storms).
-const TMDB_CACHE_PREFIX = 'veridium_show_v2:';
+const TMDB_CACHE_PREFIX = 'veridium_show_v3:';
 const TMDB_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 function readShowCache(id, type) {
@@ -379,6 +385,30 @@ function writeShowCache(id, type, details) {
     try {
         localStorage.setItem(TMDB_CACHE_PREFIX + type + ':' + id,
             JSON.stringify({ t: Date.now(), d: details }));
+    } catch (err) {}
+}
+
+
+// Collection cache: franchise parts are static, so one fetch lasts a week.
+const COLLECTION_CACHE_PREFIX = 'veridium_collection_v1:';
+
+function readCollectionCache(collectionId) {
+    try {
+        const raw = localStorage.getItem(COLLECTION_CACHE_PREFIX + collectionId);
+        if (!raw) return null;
+        const entry = JSON.parse(raw);
+        if (!entry || !entry.t || Date.now() - entry.t > TMDB_CACHE_TTL) return null;
+        return entry.d || null;
+    } catch (err) {
+        return null;
+    }
+}
+
+function writeCollectionCache(collectionId, collection) {
+    if (!collection) return;
+    try {
+        localStorage.setItem(COLLECTION_CACHE_PREFIX + collectionId,
+            JSON.stringify({ t: Date.now(), d: collection }));
     } catch (err) {}
 }
 
@@ -469,10 +499,42 @@ const ShowService = {
                 return p.department === 'Writing' || /^(Writer|Screenplay|Story|Creator)$/.test(p.job || '');
             }).map(function (p) { return p.id; }).concat((data.created_by || []).map(function (p) { return p.id; })).filter(Boolean)
                 .filter(function (id, i, list) { return list.indexOf(id) === i; }).slice(0, 16),
+            collectionId: (data.belongs_to_collection && data.belongs_to_collection.id) || null,
+            collectionName: (data.belongs_to_collection && data.belongs_to_collection.name) || '',
             episodes: {}
         };
         writeShowCache(id, type, details);
         return details;
+    },
+
+    getCollection: async (collectionId) => {
+        const cached = readCollectionCache(collectionId);
+        if (cached) return cached;
+        let data = null;
+        try {
+            const res = await fetch(TMDB_BASE + '/collection/' + collectionId + '?api_key=' + TMDB_API_KEY);
+            if (!res.ok) return null;
+            data = await res.json();
+        } catch (err) {
+            return null;
+        }
+        if (!data || !data.id || !Array.isArray(data.parts)) return null;
+        const items = data.parts.map(function (part) {
+            return {
+                id: part.id,
+                type: 'movie',
+                title: part.title || part.name || '',
+                year: (part.release_date || '').split('-')[0] || '',
+                poster: part.poster_path ? IMG_BASE + part.poster_path : POSTER_FALLBACK
+            };
+        }).filter(function (item) { return item.id && item.title; })
+          .filter(function (item, i, list) {
+              return !list.slice(0, i).some(function (other) { return other.id === item.id; });
+          })
+          .sort(function (a, b) { return String(a.year).localeCompare(String(b.year)); });
+        const collection = { id: data.id, name: data.name || 'Collection', items: items };
+        writeCollectionCache(collectionId, collection);
+        return collection;
     },
 
     getSeasonEpisodes: async (tvId, seasonNumber) => {
@@ -514,7 +576,12 @@ function getEmbedUrl(server, tmdbId, type, season, episode) {
 function setPlayerSrc(url) {
     const frame = document.getElementById('video-player');
     if (!frame || !url) return;
+    // Never reload a stream we are already showing.
+    if (frame.getAttribute('src') === url) return;
     frame.src = url;
+    // If the stream later navigates itself (its own Next Episode button),
+    // check on load so the episode list can follow along.
+    frame.addEventListener('load', playerSyncCheck);
 }
 
 async function getCurrentEmbedUrl() {
@@ -522,11 +589,87 @@ async function getCurrentEmbedUrl() {
     const servers = await loadServers();
     const slot = servers[state.serverIndex] || servers[0];
     if (!slot) return '';
+    state.playerSlot = slot;
     if (state.show.type === 'movie') {
         return getEmbedUrl(slot, state.show.tmdbId, 'movie');
     }
     return getEmbedUrl(slot, state.show.tmdbId, 'tv', state.season, state.episode ? state.episode.number : 1);
 }
+
+function syncSeasonSelect() {
+    const select = document.getElementById('season-select');
+    if (select) select.value = String(state.season);
+}
+
+// Follows the embedded player when it moves on its own (its built-in Next
+// Episode button, or a postMessage from the server): updates the highlighted
+// episode, the season dropdown and the URL WITHOUT reloading the stream.
+async function adoptEpisode(season, episode) {
+    season = parseInt(season, 10);
+    episode = parseInt(episode, 10);
+    if (!state.show || !season || !episode) return;
+    const showId = state.show.id;
+    if (season !== state.season) {
+        state.season = season;
+        await ensureSeasonEpisodes(season);
+        if (!state.show || state.show.id !== showId) return;
+    }
+    const eps = state.show.episodes[season] || [];
+    state.episode = eps.find(function (x) { return x.number === episode; }) || { number: episode, title: 'Episode ' + episode };
+    renderEpisodeList();
+    syncSeasonSelect();
+    updateShowUrl();
+}
+
+function playerSyncCheck() {
+    if (!state.show || state.show.type !== 'tv' || !state.playerSlot) return;
+    const frame = document.getElementById('video-player');
+    if (!frame) return;
+    let href = '';
+    try { href = frame.contentWindow.location.href; } catch (err) { return; }
+    if (!href || href === 'about:blank') return;
+    const id = state.show.tmdbId;
+    if (!id) return;
+    const strip = function (u) { return String(u).split('#')[0].split('?')[0]; };
+    // Candidates the embedded server might have moved to: every loaded
+    // episode, the next few of this season, and the first of the neighbors.
+    const candidates = [];
+    const loaded = state.show.episodes || {};
+    Object.keys(loaded).forEach(function (sn) {
+        (loaded[sn] || []).forEach(function (ep) { candidates.push([Number(sn), ep.number]); });
+    });
+    const cur = state.episode ? Number(state.episode.number) : 0;
+    for (let e = cur + 1; e <= cur + 3; e++) candidates.push([state.season, e]);
+    for (let e = 1; e <= 3; e++) { candidates.push([state.season + 1, e]); candidates.push([state.season - 1, e]); }
+    for (let i = 0; i < candidates.length; i++) {
+        if (strip(getEmbedUrl(state.playerSlot, id, 'tv', candidates[i][0], candidates[i][1])) === strip(href)) {
+            if (candidates[i][0] === state.season && state.episode && candidates[i][1] === state.episode.number) return;
+            adoptEpisode(candidates[i][0], candidates[i][1]);
+            return;
+        }
+    }
+}
+
+let playerSyncTimer = null;
+function startPlayerSync() {
+    stopPlayerSync();
+    playerSyncTimer = setInterval(playerSyncCheck, 1500);
+}
+function stopPlayerSync() {
+    if (playerSyncTimer) { clearInterval(playerSyncTimer); playerSyncTimer = null; }
+}
+
+// Cooperative servers can also drive us: postMessage {type:'next-episode'} or
+// {season, episode} from inside the player. Only the player frame is trusted.
+window.addEventListener('message', function (event) {
+    if (!state.show || state.show.type !== 'tv') return;
+    const frame = document.getElementById('video-player');
+    if (!frame || event.source !== frame.contentWindow) return;
+    const data = event.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'next-episode' || data.type === 'next' || data.next === true) { playNextEpisode(); return; }
+    if (Number(data.season) > 0 && Number(data.episode) > 0) { adoptEpisode(Number(data.season), Number(data.episode)); }
+});
 
 function playerFullscreen() {
     const frame = document.getElementById('video-player');
@@ -961,6 +1104,82 @@ async function chooseTopPoster(featured) {
     return featured.length ? featured[Math.floor(Math.random() * featured.length)] : null;
 }
 
+// ============ SUPER FEATURED HERO CAROUSEL ============
+
+let heroRotationTimer = null;
+
+function stopHeroRotation() {
+    if (heroRotationTimer) {
+        clearInterval(heroRotationTimer);
+        heroRotationTimer = null;
+    }
+}
+
+async function renderHeroSelection(container, featured) {
+    if (!container) return;
+    stopHeroRotation();
+    const config = await loadHostData();
+    const picks = [];
+    (config.superFeaturedShows || []).forEach(function (pick) {
+        const id = Number(pick.id);
+        if (id > 0 && (pick.type === 'tv' || pick.type === 'movie') &&
+            !picks.some(function (existing) { return existing.id === id && existing.type === pick.type; })) {
+            picks.push({ id: id, type: pick.type });
+        }
+    });
+    const shows = [];
+    for (const pick of picks) {
+        const show = await ShowService.getDetails(pick.id, pick.type).catch(function () { return null; });
+        if (show) shows.push(show);
+    }
+    // Nothing configured (or nothing loadable): normal hero behavior.
+    if (!shows.length) {
+        renderHero(container, await chooseTopPoster(featured));
+        return;
+    }
+    // A single super featured title is just a fixed hero, no dots needed.
+    if (shows.length === 1) {
+        renderHero(container, shows[0]);
+        return;
+    }
+    const rotationMs = Math.max(2000, Number(config.superFeaturedRotationMs) || 8000);
+    container.innerHTML =
+        '<div class="hero-slide">' +
+            '<div class="hero-track">' + shows.map(function (show) { return '<div class="hero-cell">' + heroBannerHtml(show) + '</div>'; }).join('') + '</div>' +
+        '</div>' +
+        '<div class="hero-dots">' +
+            shows.map(function (show, i) {
+                return '<button type="button" class="hero-dot' + (i === 0 ? ' active' : '') +
+                    '" data-hero-index="' + i + '" aria-label="' + escapeHtml(show.title || 'Featured') + '"></button>';
+            }).join('') +
+        '</div>';
+    const track = container.querySelector('.hero-track');
+    const dots = container.querySelectorAll('.hero-dot');
+    let heroIndex = 0;
+    // Swipe the whole track across: one slide per step, instantly on first paint.
+    const goToHero = function (index, animate) {
+        heroIndex = (index + shows.length) % shows.length;
+        track.style.transition = animate === false ? 'none' : '';
+        // step = one full cell (100%) plus the 1.5% slide gap from .hero-cell
+        track.style.transform = 'translateX(-' + (heroIndex * 101.5) + '%)';
+        dots.forEach(function (dot, i) { dot.classList.toggle('active', i === heroIndex); });
+    };
+    const startRotation = function () {
+        stopHeroRotation();
+        heroRotationTimer = setInterval(function () { goToHero(heroIndex + 1); }, rotationMs);
+    };
+    dots.forEach(function (dot, i) {
+        dot.addEventListener('click', function (e) {
+            e.stopPropagation();
+            goToHero(i);
+            startRotation();
+        });
+    });
+    goToHero(0, false);
+    startRotation();
+}
+
+
 async function initHome() {
     const cwSection = document.getElementById('continue-watching-section');
     const cwGrid = document.getElementById('continue-watching-grid');
@@ -980,8 +1199,8 @@ async function initHome() {
         }
         const featured = await ShowService.fetchFeatured();
         const heroContainer = document.getElementById('hero-container');
-        if (heroContainer && featured.length) {
-            renderHero(heroContainer, await chooseTopPoster(featured));
+        if (heroContainer) {
+            await renderHeroSelection(heroContainer, featured);
         }
         if (featuredGrid) {
             if (featured.length) renderGrid(featuredGrid, featured);
@@ -994,12 +1213,11 @@ async function initHome() {
     }
 }
 
-function renderHero(container, show) {
-    if (!show) return;
+function heroBannerHtml(show) {
     const metaBits = [];
     if (show.rating) metaBits.push('<span class="gold">RATING ' + escapeHtml(show.rating) + '</span>');
     if (show.year) metaBits.push('<span>' + escapeHtml(show.year) + '</span>');
-    container.innerHTML =
+    return (
         '<div class="hero-banner">' +
             '<div class="hero-bg" style="background-image: url(\'' + escapeHtml(show.backdrop) + '\')"></div>' +
             '<div class="hero-fade"></div>' +
@@ -1010,7 +1228,13 @@ function renderHero(container, show) {
                 '<p class="hero-desc">' + escapeHtml((show.summary || show.description) ? (show.summary || show.description).substring(0, 200) + '...' : '') + '</p>' +
                 '<a class="btn-action" href="' + showUrl(show.id, show.type) + '">WATCH NOW</a>' +
             '</div>' +
-        '</div>';
+        '</div>'
+    );
+}
+
+function renderHero(container, show) {
+    if (!show) return;
+    container.innerHTML = heroBannerHtml(show);
 }
 
 // ============ DATABASE (searchable catalog) ============
@@ -1102,8 +1326,7 @@ async function initFeatured() {
             return;
         }
         if (heroContainer) {
-            const hero = await chooseTopPoster(items);
-            renderHero(heroContainer, hero);
+            await renderHeroSelection(heroContainer, items);
         }
         renderGrid(grid, items);
     } catch (err) {
@@ -1171,6 +1394,7 @@ async function initShow() {
             type === 'tv' && state.episode ? state.episode.number : null
         );
         renderRecommended(id, type);
+        renderCollection(show);
     } catch (err) {
         layout.innerHTML = '<div class="ad-warning">DATA CORRUPTED. RETRY.</div>';
     }
@@ -1228,6 +1452,7 @@ function renderShowPage() {
             '<div class="episode-list-container">' +
                 '<div class="season-header">' +
                     '<span>EPISODES</span>' +
+                    '<button type="button" class="btn-secondary next-episode-btn" id="next-episode-btn" onclick="playNextEpisode()">NEXT EPISODE</button>' +
                     '<select id="season-select" class="season-select" onchange="changeSeason(this.value)">' +
                         Array.from({ length: show.totalSeasons }, function (_, i) { return i + 1; }).map(function (s) {
                             return '<option value="' + s + '"' + (s === state.season ? ' selected' : '') + '>SEASON ' + s + '</option>';
@@ -1238,11 +1463,16 @@ function renderShowPage() {
             '</div>') +
         '</div>' +
 
+        (isMovie && show.collectionId ?
+            '<h2 class="section-title toned">' + escapeHtml((show.collectionName || 'Collection').toUpperCase()) + '</h2>' +
+            '<div id="collection-grid" class="tv-grid rec-grid"></div>'
+        : '') +
+
         '<h2 class="section-title toned">Recommended</h2>' +
         '<div id="recommended-grid" class="tv-grid rec-grid"></div>';
 
     playerRefresh();
-    if (!isMovie) renderEpisodeList();
+    if (!isMovie) { renderEpisodeList(); startPlayerSync(); }
 }
 
 function switchServer(value) {
@@ -1250,16 +1480,47 @@ function switchServer(value) {
     playerRefresh();
 }
 
-async function changeSeason(season) {
-    state.season = parseInt(season);
-    if (!state.show.episodes[state.season]) {
+function playNextEpisode() {
+    const show = state.show;
+    if (!show || show.type !== 'tv') return;
+    const eps = show.episodes[state.season] || [];
+    const current = state.episode ? Number(state.episode.number) : 0;
+    const next = eps.find(function (ep) { return Number(ep.number) > current; });
+    if (next) {
+        state.episode = next;
+        renderEpisodeList();
+        playerRefresh();
+        updateShowUrl();
+        window.scrollTo(0, 0);
+    } else if (state.season < (show.totalSeasons || 1)) {
+        // Last episode of the season: roll into the next season's first episode.
+        changeSeason(state.season + 1).then(function () { window.scrollTo(0, 0); });
+    } else {
+        const btn = document.getElementById('next-episode-btn');
+        if (btn) {
+            const label = btn.textContent;
+            btn.textContent = 'END OF SERIES';
+            setTimeout(function () { btn.textContent = label; }, 1500);
+        }
+    }
+}
+
+async function ensureSeasonEpisodes(season) {
+    if (!state.show.episodes[season]) {
         const container = document.getElementById('episodes-scroll');
         if (container) container.innerHTML = '<div style="padding:20px; color:var(--purple-neon); text-align:center; font-family:\'JetBrains Mono\', monospace;">LOADING...</div>';
-        const eps = await ShowService.getSeasonEpisodes(state.show.id, state.season);
-        state.show.episodes[state.season] = eps;
+        const eps = await ShowService.getSeasonEpisodes(state.show.id, season);
+        state.show.episodes[season] = eps;
     }
+    return state.show.episodes[season];
+}
+
+async function changeSeason(season) {
+    state.season = parseInt(season);
+    await ensureSeasonEpisodes(state.season);
     state.episode = state.show.episodes[state.season][0] || { number: 1, title: 'Unavailable' };
     renderEpisodeList();
+    syncSeasonSelect();
     playerRefresh();
     updateShowUrl();
 }
@@ -1285,6 +1546,7 @@ function playEpisode(season, index) {
     state.season = season;
     state.episode = state.show.episodes[season][index];
     renderEpisodeList();
+    syncSeasonSelect();
     playerRefresh();
     updateShowUrl();
     window.scrollTo(0, 0);
@@ -1319,6 +1581,32 @@ async function renderRecommended(id, type) {
     }
     renderStrip(grid, items);
 }
+
+// ============ COLLECTION (movie franchise) ============
+
+function collectionCard(item, isCurrent) {
+    const card = posterCard(item);
+    return isCurrent ? card.replace('class="poster-card"', 'class="poster-card current"') : card;
+}
+
+async function renderCollection(show) {
+    const grid = document.getElementById('collection-grid');
+    if (!grid || !show || !show.collectionId) return;
+    grid.innerHTML = '<div class="ad-warning">LOADING...</div>';
+    const collection = await ShowService.getCollection(show.collectionId);
+    // The user may have navigated away while the parts were loading.
+    if (!grid.isConnected) return;
+    if (!collection || !collection.items.length) {
+        const heading = grid.previousElementSibling;
+        if (heading && heading.tagName === 'H2') heading.remove();
+        grid.remove();
+        return;
+    }
+    grid.innerHTML = collection.items.map(function (item) {
+        return collectionCard(item, Number(item.id) === Number(show.id));
+    }).join('');
+}
+
 
 function initParticles() {
     try {
@@ -1435,7 +1723,16 @@ function renderNavbar() {
         return Object.prototype.hasOwnProperty.call(NAV_ITEMS, name);
     });
 
-    const currentPage = document.body.getAttribute('data-page');
+    let currentPage = document.body.getAttribute('data-page');
+    // The player belongs to no nav section; keep the section the viewer came
+    // from lit so the navbar looks the same as every other page.
+    if (currentPage === 'show') {
+        try {
+            const refFile = new URL(document.referrer, window.location.href).pathname.split('/').pop();
+            const refMap = { 'database.html': 'database', 'featured.html': 'featured', 'livesports.html': 'livesports' };
+            if (refMap[refFile]) currentPage = refMap[refFile];
+        } catch (err) {}
+    }
     navRight.innerHTML = '';
 
     const bubble = document.createElement('div');

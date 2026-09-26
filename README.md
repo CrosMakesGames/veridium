@@ -10,6 +10,17 @@ A multi-page streaming TV app built for anyone to fork this repo or just take th
   Set `false` to keep the random choice.
 - `topPoster` - TMDB title to pin when enabled, for example `{ "id": 1434, "type": "tv" }`.
   This can be outside `featuredShows`; if unavailable, a random featured title is used.
+- `superFeaturedShows` - the SUPER FEATURED hero carousel: a list of TMDB titles
+  that rotate through the big hero on the Home and Featured pages, e.g.
+  `[{ "id": 1434, "type": "tv" }, { "id": 278, "type": "movie" }]`.
+  Two or more titles get the round indicators below the hero and auto-rotate;
+  a single entry pins the hero; an empty list keeps normal behavior (random
+  pick, or the `topPoster` pin above).
+- `superFeaturedRotationMs` - how fast the hero carousel advances, in
+  milliseconds. `8000` = every 8 seconds (minimum 2000). The whole track visibly swipes
+  between titles; clicking a dot jumps to it and restarts the timer.
+  `superFeaturedShows` also works on its own: an instance with only this list
+  set (no `featuredShows`) still gets the carousel.
 - `instanceHostFont` - font for the INSTANCE HOST text in the footer.
   `"Veridium title font"` is the default; set any font name to override.
 - `instanceHostText` - what the footer says after "INSTANCE HOST:".
@@ -25,7 +36,9 @@ A multi-page streaming TV app built for anyone to fork this repo or just take th
   `"Live Sports"`. Put them in any order, or remove entries - the navbar rebuilds
   itself from this list on the next refresh. ("Popular" still works and now opens
   the Database page.) The Veridium logo always links home,
-  so there is no HOME button.
+  so there is no HOME button. The player page keeps the section you came from
+  lit (Database/Featured/Live Sports via the referring page), so its navbar
+  matches the rest of the site.
 - `featuredShows` - the list on the Home and Featured pages.
   These are featured shows. Its your instance, you can feature whatever you want.
   Each entry is `{ "id": <TMDB id>, "type": "tv" or "movie" }`.
@@ -59,8 +72,28 @@ automatically per title and per episode.
   finds any show or movie (results appear while typing; Enter searches immediately).
   Trending displays up to 50 unique titles, and missing artwork displays title and year
 - `featured.html` - hero + full featured grid
-- `player.html` - player, description, Recommended below; TV gets season/episode
-  selectors; movies get the full-width cinema
+- `player.html` - player, description, Recommended below; TV gets a NEXT
+  EPISODE button in the season header (left of the season dropdown) that
+  advances one episode, rolls into the next season's first episode at the
+  end of a season (the season dropdown always tracks the season you land
+  on), and flashes END OF SERIES on the finale; plus the
+  season/episode selectors. Movies get the full-width cinema and, when they
+  belong to a TMDB collection (a franchise like Harry Potter or the
+  Avengers), a COLLECTION section under the player with every part in
+  release order, the one you're watching highlighted; parts are fetched
+  once and cached for a week. TV shows don't have collections on TMDB, so
+  they get the usual layout.
+Player/stream sync notes: setting the same stream twice never reloads
+  the iframe, and the page watches the embedded player - if a server's own
+  Next Episode button navigates the stream to another episode of the show
+  (same-origin embeds are read directly every 1.5s and on iframe load;
+  query/hash differences are ignored), the episode list, season dropdown
+  and URL follow it without reloading the stream. A cooperating server can
+  also postMessage `{type:'next-episode'}` or `{season, episode}` to the
+  parent to advance or jump; messages are only accepted from the player
+  frame itself. Cross-origin streams that navigate themselves silently
+  stay out of sync (the browser blocks reading them) - nothing breaks.
+
 - `livesports.html` - live sports. Sidebar picks the sport (or LIVE NOW), match list
   below it. Remove the page's entry from
   `navbarLayout` if you don't want the button.

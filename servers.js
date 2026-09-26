@@ -5,11 +5,15 @@
 
 window.VERIDIUM_SERVERS = [
     {
-        "title": "Veridium Default",
+        "title": "tvserver-1",
         "serverMovieLink": "tvserver-1.crosmakesgames.com/embed/${movieId}",
         "serverTvLink": "tvserver-1.crosmakesgames.com/embed/${tvId}/${season}/${episode}"
     },
-    null,
+    {
+        "title": "vidsrcme",
+        "serverMovieLink": "vidsrcme.ru/embed/${movieId}",
+        "serverTvLink": "vidsrcme.ru/embed/${tvId}/${season}/${episode}"
+    },
     null,
     null,
     null,

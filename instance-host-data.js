@@ -5,10 +5,15 @@ window.VERIDIUM_HOST_DATA = {
     // the accent color. Default is "Veridium".
     "siteTitle": "Veridium",
 
-    // Set true to pin the top featured poster/hero on Home and Featured.
-    // Use a TMDB movie or TV ID; false keeps it random.
+    // Top poster is the show always pinned. Default random out of feature list
     "useCustomTopPoster": false,
-    "topPoster": { "id": 1283515, "type": "movie" },
+    "topPoster": { "id": 1434, "type": "tv" },
+
+    // 1 or more shows that are in the pin spot and shows rotates. 
+    "superFeaturedShows": [{ "id": 1339713, "type": "movie" },{"id": 1434, "type": "tv"}, {"id": 66732, "type": "tv"}, {"id": 1396, "type": "tv"},{ "id": 1405, "type": "tv" }, ],
+    // How often the hero advances, in milliseconds (8000 = every 8s, minimum 2000).
+    "superFeaturedRotationMs": 8000,
+
 
     // The font the INSTANCE HOST text uses in the footer.
     // "Veridium title font" is the default. 
@@ -27,7 +32,7 @@ window.VERIDIUM_HOST_DATA = {
 
     // Custom color scheme put any color here (like #FF5500 for orange).
     // Leave empty for the default Veridium purple (#8B5CF6).
-    "customColorScheme": "#8B5CF6",
+    "customColorScheme": "",
 
     // Navbar Layout - the buttons that show up in the navbar from left to right. You can rearrange or remove but theser are your options:
     "navbarLayout": [
@@ -80,15 +85,15 @@ window.VERIDIUM_HOST_DATA = {
         { "id": 604079, "type": "movie" },   // The Long Walk
         { "id": 936075, "type": "movie" },         // Michael
         { "id": 37799, "type": "movie" }, // The Social Network
-        { "id": 13, "type": "movie" }, // Forrest Gump
+        { "id": 13, "type": "movie" },      // Forrest Gump
         { "id": 424694, "type": "movie" },   // Bohemian Rhapsody
     ]
 };
 
 
 
-// BOOT: makes this file available instantly on every page. Don't edit.
-// caches the data (localStorage) so fast page switching never waits on this
+// ==== BOOT: makes this file available instantly on every page. Don't edit. ====
+// Caches the data (localStorage) so fast page switching never waits on this
 // file, and pings app.js the moment the data is ready.
 (function () {
     try {
