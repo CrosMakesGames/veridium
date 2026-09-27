@@ -11,6 +11,11 @@ window.VERIDIUM_SERVERS = [
     },
     {
         "title": "vidsrcme",
+        "serverMovieLink": "vidsrcme.sh/embed/${movieId}",
+        "serverTvLink": "vidsrcme.sh/embed/${tvId}/${season}/${episode}"
+    },
+    {
+        "title": "vidsrcme-2",
         "serverMovieLink": "vidsrcme.ru/embed/${movieId}",
         "serverTvLink": "vidsrcme.ru/embed/${tvId}/${season}/${episode}"
     },
