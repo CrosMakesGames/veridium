@@ -1434,9 +1434,8 @@ function renderShowPage() {
                     '<button type="button" class="btn-secondary" onclick="playerFullscreen()">FULLSCREEN</button>' +
                     '<button type="button" class="btn-secondary" onclick="playerRefresh()">REFRESH</button>' +
                     '<button type="button" class="btn-secondary" onclick="playerOpenLink()">OPEN LINK</button>' +
-                    '<button type="button" class="btn-secondary" onclick="playerAboutBlank()">OPEN IN ABOUT:BLANK</button>' +
                     '<div class="server-select-wrap">' +
-                        '<span class="server-select-label">SERVER SELECTOR:</span>' +
+                        '<span class="server-select-label"><b> Media Not Found? -></b>  SERVER SELECTOR:</span>' +
                         '<select id="server-select" class="server-select" onchange="switchServer(this.value)">' + serverOptions + '</select>' +
                     '</div>' +
                 '</div>' +
