@@ -25,7 +25,7 @@ const SERVERS_FALLBACK = [
 ];
 
 const HOST_DATA_CACHE_KEY = 'veridium_host_data_cache_v1';
-const SERVERS_CACHE_KEY = 'veridium_servers_cache_v1';
+const SERVERS_CACHE_KEY = 'veridium_servers_cache_v2';
 
 function readJSONCache(key) {
     try {
@@ -308,6 +308,55 @@ function shuffleList(array) {
     return shuffled;
 }
 
+// ============ UPCOMING DETECTION ============
+
+function parseReleaseDate(value) {
+    if (!value || typeof value !== 'string') return null;
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+    if (!match) return null;
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+    return isNaN(date.getTime()) ? null : date;
+}
+
+// A title counts as released from the start of its release date onwards,
+// so it only stays "upcoming" while the date is still in the future.
+function isUpcomingDate(value) {
+    const date = parseReleaseDate(value);
+    return !!(date && date.getTime() > Date.now());
+}
+
+function formatReleaseDate(value) {
+    const date = parseReleaseDate(value);
+    if (!date) return '';
+    // Parsed as UTC midnight, so also format in UTC: without this, users in
+    // negative-UTC timezones would see the release date shift back a day.
+    return date.toLocaleDateString([], { timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function daysUntilRelease(value) {
+    const date = parseReleaseDate(value);
+    if (!date) return null;
+    const days = Math.ceil((date.getTime() - Date.now()) / 86400000);
+    return days > 0 ? days : null;
+}
+
+// Decides if a title is still unreleased. Movies need a future release date
+// (or no date while still Planned / In Production). TV titles are upcoming
+// for as long as not a single episode has aired yet.
+function computeUpcoming(info) {
+    if (!info) return false;
+    const futureRelease = isUpcomingDate(info.releaseDate);
+    if (info.type === 'movie') {
+        return futureRelease ||
+            (!info.releaseDate && (info.status === 'Planned' || info.status === 'In Production'));
+    }
+    if (info.hasAired) return false;
+    // Undated TV only counts as upcoming while still officially in the works -
+    // a canceled or ended show with no dates and no aired episodes is not.
+    return futureRelease || isUpcomingDate(info.nextAirDate) ||
+        info.status === 'Planned' || info.status === 'In Production';
+}
+
 function normalizeTMDB(item) {
     if (item.media_type !== 'movie' && item.media_type !== 'tv') return null;
     const rawDate = item.release_date || item.first_air_date || '';
@@ -321,7 +370,9 @@ function normalizeTMDB(item) {
         rating: hasRating ? item.vote_average.toFixed(1) : '',
         summary: item.overview,
         poster: item.poster_path ? IMG_BASE + item.poster_path : POSTER_FALLBACK,
-        backdrop: item.backdrop_path ? IMG_ORIGINAL + item.backdrop_path : POSTER_FALLBACK
+        backdrop: item.backdrop_path ? IMG_ORIGINAL + item.backdrop_path : POSTER_FALLBACK,
+        releaseDate: rawDate,
+        upcoming: isUpcomingDate(rawDate)
     };
 }
 
@@ -333,19 +384,23 @@ function showUrl(id, type, season, episode) {
 }
 
 function posterCard(item) {
-    return '<a class="poster-card" href="' + showUrl(item.id, item.type) + '">' +
+    const upcoming = !!(item && item.upcoming);
+    return '<a class="poster-card' + (upcoming ? ' poster-upcoming' : '') + '" href="' + showUrl(item.id, item.type) + '">' +
         '<img src="' + escapeHtml(item.poster) + '" loading="lazy" alt="" onerror=\'this.onerror=null;this.src=' + JSON.stringify(POSTER_FALLBACK) + ';\'>' +
+        (upcoming ? '<span class="poster-upcoming-badge">UPCOMING</span>' : '') +
         '</a>';
 }
 
 function databasePosterCard(item) {
     const href = showUrl(item.id, item.type);
-    return '<a class="poster-card db-poster-card" href="' + href + '" aria-label="' + escapeHtml(item.title + (item.year ? ' (' + item.year + ')' : '')) + '">' +
+    const upcoming = !!(item && item.upcoming);
+    return '<a class="poster-card db-poster-card' + (upcoming ? ' poster-upcoming' : '') + '" href="' + href + '" aria-label="' + escapeHtml(item.title + (item.year ? ' (' + item.year + ')' : '')) + '">' +
         '<div class="db-poster-missing"><strong>' + escapeHtml(item.title || 'Untitled') + '</strong>' +
             (item.year ? '<small>' + escapeHtml(item.year) + '</small>' : '') + '</div>' +
         (item.poster && item.poster !== POSTER_FALLBACK
             ? '<img src="' + escapeHtml(item.poster) + '" loading="lazy" alt="" onerror="this.onerror=null;this.style.display=&quot;none&quot;;">'
             : '') +
+        (upcoming ? '<span class="poster-upcoming-badge">UPCOMING</span>' : '') +
         '</a>';
 }
 
@@ -365,7 +420,7 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
 
 // TMDB details cache: the featured list is static, so after one good load
 // every page visit is instant and costs zero API calls (no rate-limit storms).
-const TMDB_CACHE_PREFIX = 'veridium_show_v3:';
+const TMDB_CACHE_PREFIX = 'veridium_show_v4:';
 const TMDB_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 function readShowCache(id, type) {
@@ -469,7 +524,12 @@ const ShowService = {
 
     getDetails: async (id, type) => {
         const cached = readShowCache(id, type);
-        if (cached) return cached;
+        if (cached) {
+            // "Upcoming" is time-based, so it is re-derived on every read:
+            // a title must flip back to watchable the day it premieres.
+            cached.upcoming = computeUpcoming(cached);
+            return cached;
+        }
         let data = null;
         try {
             const res = await fetch(TMDB_BASE + '/' + type + '/' + id + '?api_key=' + TMDB_API_KEY + '&append_to_response=credits,keywords');
@@ -501,15 +561,34 @@ const ShowService = {
                 .filter(function (id, i, list) { return list.indexOf(id) === i; }).slice(0, 16),
             collectionId: (data.belongs_to_collection && data.belongs_to_collection.id) || null,
             collectionName: (data.belongs_to_collection && data.belongs_to_collection.name) || '',
+            releaseDate: data.release_date || data.first_air_date || '',
+            hasAired: type === 'tv' ? !!(data.last_episode_to_air && data.last_episode_to_air.air_date) : false,
+            nextAirDate: (data.next_episode_to_air && data.next_episode_to_air.air_date) || '',
+            nextAir: (data.next_episode_to_air && data.next_episode_to_air.air_date) ? {
+                season: data.next_episode_to_air.season_number,
+                episode: data.next_episode_to_air.episode_number,
+                title: data.next_episode_to_air.name || '',
+                overview: data.next_episode_to_air.overview || '',
+                date: data.next_episode_to_air.air_date
+            } : null,
+            status: data.status || '',
             episodes: {}
         };
+        details.upcoming = computeUpcoming(details);
         writeShowCache(id, type, details);
         return details;
     },
 
     getCollection: async (collectionId) => {
         const cached = readCollectionCache(collectionId);
-        if (cached) return cached;
+        if (cached) {
+            // Time-based like getDetails: re-derive upcoming on every read so
+            // a part that premieres flips back to a normal card immediately.
+            (cached.items || []).forEach(function (item) {
+                item.upcoming = isUpcomingDate(item.releaseDate || '');
+            });
+            return cached;
+        }
         let data = null;
         try {
             const res = await fetch(TMDB_BASE + '/collection/' + collectionId + '?api_key=' + TMDB_API_KEY);
@@ -525,7 +604,9 @@ const ShowService = {
                 type: 'movie',
                 title: part.title || part.name || '',
                 year: (part.release_date || '').split('-')[0] || '',
-                poster: part.poster_path ? IMG_BASE + part.poster_path : POSTER_FALLBACK
+                poster: part.poster_path ? IMG_BASE + part.poster_path : POSTER_FALLBACK,
+                releaseDate: part.release_date || '',
+                upcoming: isUpcomingDate(part.release_date || '')
             };
         }).filter(function (item) { return item.id && item.title; })
           .filter(function (item, i, list) {
@@ -1214,19 +1295,24 @@ async function initHome() {
 }
 
 function heroBannerHtml(show) {
+    const upcoming = !!show.upcoming;
     const metaBits = [];
     if (show.rating) metaBits.push('<span class="gold">RATING ' + escapeHtml(show.rating) + '</span>');
-    if (show.year) metaBits.push('<span>' + escapeHtml(show.year) + '</span>');
+    if (upcoming && show.releaseDate && isUpcomingDate(show.releaseDate)) {
+        metaBits.push('<span>' + escapeHtml(formatReleaseDate(show.releaseDate).toUpperCase()) + '</span>');
+    } else if (show.year) {
+        metaBits.push('<span>' + escapeHtml(show.year) + '</span>');
+    }
     return (
-        '<div class="hero-banner">' +
+        '<div class="hero-banner' + (upcoming ? ' hero-upcoming' : '') + '">' +
             '<div class="hero-bg" style="background-image: url(\'' + escapeHtml(show.backdrop) + '\')"></div>' +
             '<div class="hero-fade"></div>' +
             '<div class="hero-content">' +
-                '<div class="hero-tag">FEATURED ' + (show.type === 'movie' ? 'MOVIE' : 'TV SHOW') + '</div>' +
+                '<div class="hero-tag">' + (upcoming ? 'UPCOMING ' : 'FEATURED ') + (show.type === 'movie' ? 'MOVIE' : 'TV SHOW') + '</div>' +
                 '<h1 class="hero-title">' + escapeHtml(show.title) + '</h1>' +
                 (metaBits.length ? '<div class="hero-meta">' + metaBits.join('<span>|</span>') + '</div>' : '') +
                 '<p class="hero-desc">' + escapeHtml((show.summary || show.description) ? (show.summary || show.description).substring(0, 200) + '...' : '') + '</p>' +
-                '<a class="btn-action" href="' + showUrl(show.id, show.type) + '">WATCH NOW</a>' +
+                '<a class="btn-action' + (upcoming ? ' btn-upcoming' : '') + '" href="' + showUrl(show.id, show.type) + '">' + (upcoming ? 'COMING SOON' : 'WATCH NOW') + '</a>' +
             '</div>' +
         '</div>'
     );
@@ -1358,6 +1444,18 @@ async function initShow() {
         }
         state.show = show;
 
+        // Upcoming title: dedicated release-info page. No player, no
+        // episodes, no Continue Watching entry until it premieres.
+        if (show.upcoming) {
+            state.season = 1;
+            state.episode = null;
+            renderShowPage();
+            document.title = show.title + ' - Veridium';
+            renderRecommended(id, type);
+            renderCollection(show);
+            return;
+        }
+
         // Where to start: explicit URL params win, then saved progress, then S1E1.
         const saved = loadHistory().find(function (e) {
             return e.id === Number(show.id) && e.type === type;
@@ -1402,6 +1500,10 @@ async function initShow() {
 
 function renderShowPage() {
     const show = state.show;
+    if (show.upcoming) {
+        renderUpcomingPage();
+        return;
+    }
     const isMovie = show.type === 'movie';
     const layout = document.getElementById('show-root');
 
@@ -1472,6 +1574,80 @@ function renderShowPage() {
 
     playerRefresh();
     if (!isMovie) { renderEpisodeList(); startPlayerSync(); }
+}
+
+// ============ UPCOMING PLAYER PAGE ============
+// The player is replaced by a greyed-out, unclickable panel that says
+// Upcoming plus the release dates and details.
+
+function upcomingDateBits(show) {
+    const bits = { date: '', label: '', countdown: '', ep: '' };
+    if (show.type === 'movie') {
+        bits.label = show.releaseDate
+            ? 'PREMIERING ' + formatReleaseDate(show.releaseDate).toUpperCase()
+            : 'RELEASE DATE NOT YET ANNOUNCED';
+        bits.date = show.releaseDate || '';
+    } else if (isUpcomingDate(show.releaseDate)) {
+        bits.label = 'SERIES PREMIERE ' + formatReleaseDate(show.releaseDate).toUpperCase();
+        bits.date = show.releaseDate;
+    } else if (show.nextAir && isUpcomingDate(show.nextAir.date)) {
+        bits.label = 'NEXT EPISODE ' + formatReleaseDate(show.nextAir.date).toUpperCase();
+        bits.date = show.nextAir.date;
+        if (show.nextAir.title) {
+            bits.ep = 'NEXT EPISODE: S' + show.nextAir.season + 'E' + show.nextAir.episode + ' - ' + show.nextAir.title;
+        }
+    } else {
+        bits.label = 'AIR DATE NOT YET ANNOUNCED';
+    }
+    const days = daysUntilRelease(bits.date);
+    if (days) bits.countdown = 'IN ' + days + ' DAY' + (days === 1 ? '' : 'S');
+    return bits;
+}
+
+function renderUpcomingPage() {
+    const show = state.show;
+    const layout = document.getElementById('show-root');
+    const isMovie = show.type === 'movie';
+    const bits = upcomingDateBits(show);
+
+    const metaBits = [];
+    if (show.rating) metaBits.push('<span class="gold">RATING ' + escapeHtml(show.rating) + '</span>');
+    if (bits.date) metaBits.push('<span>' + escapeHtml(formatReleaseDate(bits.date).toUpperCase()) + '</span>');
+    if (!isMovie && show.totalSeasons) metaBits.push('<span>' + escapeHtml(show.totalSeasons) + ' SEASONS</span>');
+
+    layout.innerHTML =
+        '<a href="index.html" class="back-link">&lt; BACK</a>' +
+
+        '<div class="details-layout movie-layout upcoming-layout">' +
+            '<div>' +
+                '<div class="video-container upcoming-container">' +
+                    '<div class="upcoming-bg" style="background-image: url(\'' + escapeHtml(show.backdrop) + '\')"></div>' +
+                    '<div class="upcoming-fade"></div>' +
+                    '<div class="upcoming-panel">' +
+                        '<div class="upcoming-label">UPCOMING</div>' +
+                        '<div class="upcoming-date">' + escapeHtml(bits.label) + '</div>' +
+                        (bits.countdown ? '<div class="upcoming-countdown">' + escapeHtml(bits.countdown) + '</div>' : '') +
+                        (show.status ? '<div class="upcoming-status">STATUS: ' + escapeHtml(String(show.status).toUpperCase()) + '</div>' : '') +
+                        (bits.ep ? '<div class="upcoming-ep">' + escapeHtml(bits.ep) + '</div>' : '') +
+                        '<div class="upcoming-note">This title has not been released yet, so playback is unavailable. It will open here once it premieres.</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="show-info">' +
+                    '<div class="show-type-tag">' + (isMovie ? 'MOVIE' : 'TV SERIES') + '</div>' +
+                    '<h1 class="show-title">' + escapeHtml(show.title) + '</h1>' +
+                    (metaBits.length ? '<div class="show-meta">' + metaBits.join('<span>|</span>') + '</div>' : '') +
+                    '<p class="show-desc">' + escapeHtml(show.description) + '</p>' +
+                '</div>' +
+            '</div>' +
+        '</div>' +
+
+        (isMovie && show.collectionId ?
+            '<h2 class="section-title toned">' + escapeHtml((show.collectionName || 'Collection').toUpperCase()) + '</h2>' +
+            '<div id="collection-grid" class="tv-grid rec-grid"></div>'
+        : '') +
+
+        '<h2 class="section-title toned">Recommended</h2>' +
+        '<div id="recommended-grid" class="tv-grid rec-grid"></div>';
 }
 
 function switchServer(value) {
@@ -1585,7 +1761,9 @@ async function renderRecommended(id, type) {
 
 function collectionCard(item, isCurrent) {
     const card = posterCard(item);
-    return isCurrent ? card.replace('class="poster-card"', 'class="poster-card current"') : card;
+    // Works for both normal and upcoming cards (the upcoming variant has a
+    // longer class list, so match on the class prefix, not the full string).
+    return isCurrent ? card.replace('class="poster-card', 'class="poster-card current') : card;
 }
 
 async function renderCollection(show) {

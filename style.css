@@ -855,3 +855,138 @@ body {
     box-shadow: 0 0 8px rgba(var(--purple-rgb), 0.6);
 }
 .hero-dot:hover { background: rgba(var(--purple-rgb), 0.5); }
+
+/* ============ UPCOMING TITLES ============ */
+
+/* Greyed out but still clickable poster cards. */
+.poster-card.poster-upcoming { border-color: rgba(255, 255, 255, 0.10); }
+.poster-card.poster-upcoming img {
+    filter: grayscale(0.85) brightness(0.62);
+    opacity: 0.55;
+}
+.poster-card.poster-upcoming::after {
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.6), transparent 55%);
+    opacity: 0.75;
+}
+.poster-card.poster-upcoming:hover { border-color: rgba(255, 255, 255, 0.22); }
+.poster-card.poster-upcoming:hover img {
+    filter: grayscale(0.7) brightness(0.72);
+    opacity: 0.7;
+    transform: scale(1.02);
+}
+.poster-upcoming-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 3;
+    padding: 3px 7px;
+    background: rgba(10, 6, 20, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    color: #c9c9c9;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    pointer-events: none;
+}
+
+/* Greyed hero + button for upcoming featured titles. */
+.hero-banner.hero-upcoming .hero-bg { filter: grayscale(1) brightness(0.45); }
+.btn-action.btn-upcoming {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #b9b9b9;
+}
+
+/* The upcoming "player": greyed out and unclickable instead of an iframe. */
+.video-container.upcoming-container {
+    pointer-events: none;
+    user-select: none;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.upcoming-container .upcoming-bg {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    filter: grayscale(1) brightness(0.35);
+}
+.upcoming-container .upcoming-fade {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.92) 20%, rgba(0, 0, 0, 0.55));
+}
+.upcoming-panel {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px 20px;
+    pointer-events: none;
+}
+.upcoming-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: clamp(22px, 4.5vw, 40px);
+    letter-spacing: 0.35em;
+    text-indent: 0.35em;
+    color: #e0e0e0;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    padding: 10px 18px;
+    opacity: 0.92;
+    filter: grayscale(1);
+}
+.upcoming-date {
+    margin-top: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: #bdbdbd;
+}
+.upcoming-countdown {
+    margin-top: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+    color: var(--warning-gold);
+    border: 1px solid rgba(255, 193, 7, 0.4);
+    padding: 4px 10px;
+}
+.upcoming-status {
+    margin-top: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    color: #8f8f8f;
+}
+.upcoming-ep {
+    margin-top: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: #a3a3a3;
+    max-width: 90%;
+}
+.upcoming-note {
+    margin-top: 18px;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    color: #8a8a8a;
+    max-width: 460px;
+    line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+    .upcoming-label {
+        font-size: 18px;
+        padding: 6px 12px;
+        letter-spacing: 0.25em;
+        text-indent: 0.25em;
+    }
+    .upcoming-date { font-size: 11px; margin-top: 10px; letter-spacing: 1px; }
+    .upcoming-countdown { margin-top: 8px; font-size: 10px; }
+    .upcoming-status, .upcoming-note { display: none; }
+    .upcoming-ep { font-size: 10px; }
+}
