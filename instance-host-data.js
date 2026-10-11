@@ -25,7 +25,7 @@ window.VERIDIUM_HOST_DATA = {
     "instanceHostLink": "https://crosmakesgames.com",
 
 
-    "customFavicon": "false",
+    "customFavicon": false,
     // Only used when "customFavicon" is set to true.
     // If you change the color scheme it will auto update the favicon.
     "customFaviconLink": "",

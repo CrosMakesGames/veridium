@@ -5,9 +5,19 @@
 
 window.VERIDIUM_SERVERS = [
     {
+        "title": "viduki-1",
+        "serverMovieLink": "viduki.net/1/movie/${movieId}",
+        "serverTvLink": "viduki.net/1/tv/${tvId}/${season}/${episode}"
+    },
+    {
         "title": "tvserver-1",
         "serverMovieLink": "tvserver-1.crosmakesgames.com/embed/${movieId}",
         "serverTvLink": "tvserver-1.crosmakesgames.com/embed/${tvId}/${season}/${episode}"
+    },
+    {
+        "title": "viduki-3",
+        "serverMovieLink": "viduki.net/3/movie/${movieId}",
+        "serverTvLink": "viduki.net/3/tv/${tvId}/${season}/${episode}"
     },
     {
         "title": "vidsrcme-1",
@@ -24,7 +34,6 @@ window.VERIDIUM_SERVERS = [
     null,
     null,
     null,
-    null,
     null
 ];
 
@@ -32,7 +41,7 @@ window.VERIDIUM_SERVERS = [
 // ==== BOOT: makes this file available instantly on every page. Don't edit. ====
 (function () {
     try {
-        localStorage.setItem('veridium_servers_cache_v2', JSON.stringify(window.VERIDIUM_SERVERS));
+        localStorage.setItem('veridium_servers_cache_v3', JSON.stringify(window.VERIDIUM_SERVERS));
     } catch (err) {}
     try {
         window.dispatchEvent(new CustomEvent('veridium-servers-ready'));

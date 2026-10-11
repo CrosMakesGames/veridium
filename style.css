@@ -990,3 +990,16 @@ body {
     .upcoming-status, .upcoming-note { display: none; }
     .upcoming-ep { font-size: 10px; }
 }
+
+/* Unaired episodes in the episode selector: greyed out, unclickable. */
+.episode-item.episode-upcoming {
+    opacity: 0.45;
+    filter: grayscale(0.85);
+    cursor: default;
+    pointer-events: none;
+}
+.ep-upcoming-tag {
+    color: #8f8f8f;
+    font-size: 0.9em;
+    letter-spacing: 1px;
+}

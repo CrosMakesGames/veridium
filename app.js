@@ -25,7 +25,7 @@ const SERVERS_FALLBACK = [
 ];
 
 const HOST_DATA_CACHE_KEY = 'veridium_host_data_cache_v1';
-const SERVERS_CACHE_KEY = 'veridium_servers_cache_v2';
+const SERVERS_CACHE_KEY = 'veridium_servers_cache_v5';
 
 function readJSONCache(key) {
     try {
@@ -276,8 +276,12 @@ function applyHostData() {
     applyColorScheme(data.customColorScheme);
     const scheme = normalizeHexColor(data.customColorScheme) || DEFAULT_COLOR_SCHEME;
     let faviconUrl = '';
-    if (typeof data.customFavicon === 'string' && data.customFavicon.trim()) faviconUrl = data.customFavicon.trim();
-    else if (data.customFavicon === true && data.customFaviconLink) faviconUrl = data.customFaviconLink;
+    // Guard against config values like the string "false" slipping through
+    // as truthy - that would make every page request a file named "false".
+    const faviconSetting = String(data.customFavicon === true ? 'true' : (data.customFavicon || '')).trim();
+    const faviconEnabled = faviconSetting !== '' && faviconSetting.toLowerCase() !== 'false';
+    if (faviconEnabled && typeof data.customFavicon === 'string' && data.customFavicon.trim()) faviconUrl = data.customFavicon.trim();
+    else if (faviconEnabled && data.customFaviconLink) faviconUrl = data.customFaviconLink;
     applyFavicon(faviconUrl || defaultFaviconHref(scheme));
 
     const linksWrap = document.getElementById('footer-links');
@@ -625,7 +629,8 @@ const ShowService = {
         return data.episodes.map(ep => ({
             number: ep.episode_number,
             title: ep.name,
-            overview: ep.overview
+            overview: ep.overview,
+            airDate: ep.air_date || ''
         }));
     },
 
@@ -1481,6 +1486,11 @@ async function initShow() {
             if (!startEpisode && saved && saved.season === startSeason && saved.episode) {
                 startEpisode = eps.find(function (e) { return e.number === saved.episode; }) || null;
             }
+            // Never auto-start on an unaired episode: fall back to the
+            // first episode that has actually aired.
+            const firstAired = eps.find(function (e) { return !isUpcomingDate(e.airDate); }) || null;
+            if (startEpisode && isUpcomingDate(startEpisode.airDate)) startEpisode = null;
+            if (!startEpisode) startEpisode = firstAired;
             state.episode = startEpisode || eps[0] || { number: 1, title: 'Unavailable' };
         }
 
@@ -1537,7 +1547,7 @@ function renderShowPage() {
                     '<button type="button" class="btn-secondary" onclick="playerRefresh()">REFRESH</button>' +
                     '<button type="button" class="btn-secondary" onclick="playerOpenLink()">OPEN LINK</button>' +
                     '<div class="server-select-wrap">' +
-                        '<span class="server-select-label"><b> Media Not Found? -></b>  SERVER SELECTOR:</span>' +
+                        '<span class="server-select-label"><b> Broken or Weird? -></b> </span>' +
                         '<select id="server-select" class="server-select" onchange="switchServer(this.value)">' + serverOptions + '</select>' +
                     '</div>' +
                 '</div>' +
@@ -1660,7 +1670,7 @@ function playNextEpisode() {
     if (!show || show.type !== 'tv') return;
     const eps = show.episodes[state.season] || [];
     const current = state.episode ? Number(state.episode.number) : 0;
-    const next = eps.find(function (ep) { return Number(ep.number) > current; });
+    const next = eps.find(function (ep) { return Number(ep.number) > current && !isUpcomingDate(ep.airDate); });
     if (next) {
         state.episode = next;
         renderEpisodeList();
@@ -1674,7 +1684,8 @@ function playNextEpisode() {
         const btn = document.getElementById('next-episode-btn');
         if (btn) {
             const label = btn.textContent;
-            btn.textContent = 'END OF SERIES';
+            const onlyUnaired = eps.some(function (ep) { return Number(ep.number) > current; });
+            btn.textContent = onlyUnaired ? 'NO AIRED EPISODES YET' : 'END OF SERIES';
             setTimeout(function () { btn.textContent = label; }, 1500);
         }
     }
@@ -1693,7 +1704,9 @@ async function ensureSeasonEpisodes(season) {
 async function changeSeason(season) {
     state.season = parseInt(season);
     await ensureSeasonEpisodes(state.season);
-    state.episode = state.show.episodes[state.season][0] || { number: 1, title: 'Unavailable' };
+    const seasonEps = state.show.episodes[state.season] || [];
+    state.episode = seasonEps.find(function (e) { return !isUpcomingDate(e.airDate); }) ||
+        seasonEps[0] || { number: 1, title: 'Unavailable' };
     renderEpisodeList();
     syncSeasonSelect();
     playerRefresh();
@@ -1710,9 +1723,13 @@ function renderEpisodeList() {
     }
     container.innerHTML = episodes.map(function (ep, idx) {
         const isActive = state.episode && ep.number === state.episode.number;
-        return '<div class="episode-item' + (isActive ? ' active' : '') + '" onclick="playEpisode(' + state.season + ', ' + idx + ')">' +
+        // Unaired episodes are greyed out and inert - no stream exists yet.
+        const upcoming = isUpcomingDate(ep.airDate);
+        return '<div class="episode-item' + (isActive ? ' active' : '') + (upcoming ? ' episode-upcoming' : '') + '"' +
+            (upcoming ? '' : ' onclick="playEpisode(' + state.season + ', ' + idx + ')"') + '>' +
             '<div class="ep-num">' + ep.number + '</div>' +
-            '<div class="ep-title">' + escapeHtml(ep.title) + '</div>' +
+            '<div class="ep-title">' + escapeHtml(ep.title) +
+                (upcoming ? ' <span class="ep-upcoming-tag">(UPCOMING)</span>' : '') + '</div>' +
             '</div>';
     }).join('');
 }
@@ -1856,6 +1873,39 @@ function initParticles() {
     }
 }
 
+// ============ POPULAR (cross-type popularity grid) ============
+
+async function initPopular() {
+    const grid = document.getElementById('popular-grid');
+    if (!grid) return;
+    grid.innerHTML = '<div class="ad-warning">LOADING...</div>';
+    const load = async function (type) {
+        try {
+            const res = await fetch(TMDB_BASE + '/discover/' + type + '?api_key=' + TMDB_API_KEY +
+                '&sort_by=popularity.desc&vote_count.gte=200&include_adult=false&page=1');
+            const data = await res.json();
+            // /discover results carry no media_type field - add it back so
+            // normalizeTMDB (and its upcoming flag) accepts each item.
+            return (data.results || []).map(function (r) { return normalizeTMDB(Object.assign({}, r, { media_type: type })); }).filter(Boolean);
+        } catch (err) {
+            return [];
+        }
+    };
+    const [movies, shows] = await Promise.all([load('movie'), load('tv')]);
+    // Interleave the two lists so the page is not just a wall of one type.
+    const merged = [];
+    const maxLen = Math.max(movies.length, shows.length);
+    for (let i = 0; i < maxLen; i++) {
+        if (shows[i]) merged.push(shows[i]);
+        if (movies[i]) merged.push(movies[i]);
+    }
+    if (!merged.length) {
+        grid.innerHTML = '<div class="ad-warning">Failed to load content. Refresh the page.</div>';
+        return;
+    }
+    renderGrid(grid, merged.slice(0, 40));
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     initParticles();
     const page = document.body.getAttribute('data-page');
@@ -1866,6 +1916,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (page === 'home') initHome();
     else if (page === 'database') initDatabase();
     else if (page === 'featured') initFeatured();
+    else if (page === 'popular') initPopular();
     else if (page === 'show') initShow();
     else if (page === 'livesports') initLiveSports();
 });
