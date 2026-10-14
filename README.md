@@ -97,3 +97,27 @@ Player/stream sync notes: setting the same stream twice never reloads
 - `livesports.html` - live sports. Sidebar picks the sport (or LIVE NOW), match list
   below it. Remove the page's entry from
   `navbarLayout` if you don't want the button.
+
+## Mobile (phones)
+
+style.css ships a full phone layout on top of the desktop one:
+
+- `<=900px` tablet pass: tighter nav, smaller hero, 4-5 poster rows.
+- `<=640px` phone pass: the navbar stacks into two rows (logo over a
+  full-width segmented tab bar), grids go 3 posters per row, the player
+  buttons become two-per-row 44px tap targets with the server picker on
+  its own full-width row, the episode list caps at 400px, and the
+  Database search input uses 16px text so iOS doesn't zoom on focus.
+- `<=380px` small-phone pass: 2 posters per row, tighter nav text.
+- Touch devices don't get the hover lift effects; the Continue Watching
+  remove button is always visible (no hover on phones).
+- `viewport-fit=cover` + safe-area padding handle notched/gesture phones.
+
+The desktop layout is unchanged - everything above lives in media queries.
+
+## Servers note
+
+The default servers.js ships with 9 working embed providers verified in
+October 2026: viduki (x3 slots incl. multi-language + premium), vidy.st,
+vidfast.pro, vidlink.pro, vidrock.to, vidzee, and tvserver-1. Full https://
+URLs are used so the app never has to guess the scheme.
