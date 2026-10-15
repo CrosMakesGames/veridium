@@ -1173,3 +1173,92 @@ body { -webkit-tap-highlight-color: rgba(139, 92, 246, 0.15); }
 @supports (padding: env(safe-area-inset-bottom)) {
     .site-footer { margin-bottom: env(safe-area-inset-bottom); }
     .content-container { padding-bottom: max(26px, calc(env(safe-area-inset-bottom) + 12px)); }
+
+
+/* ================================================================
+   POSTER FLAGS (showFlags in instance host)
+   Pills in the top-right corner of each poster: recent / featured /
+   acclaimed. Black text on the flag's color.
+   ================================================================ */
+
+.poster-flags {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.poster-flag {
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: 999px;
+    color: #000;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.poster-flag-recent    { background: #F5C518; }
+.poster-flag-featured  { background: var(--purple-bright, #a78bfa); }
+.poster-flag-acclaimed { background: #01D277; }
+
+/* ================================================================
+   HOME PAGE STRIPS (layout.conf: database_button, backtotop)
+   ================================================================ */
+
+.home-db-button,
+.home-back-to-top {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin: 26px 0 30px;
+    padding: 15px 18px;
+    border: 1px solid rgba(var(--purple-rgb), 0.18);
+    background: rgba(var(--purple-rgb), 0.04);
+}
+
+.home-db-text {
+    color: #a89ec9;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+}
+
+.home-db-link,
+.home-btt-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--purple);
+    color: #fff;
+    border: 1px solid var(--purple-bright);
+    padding: 9px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    text-decoration: none;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.home-db-link:hover,
+.home-btt-link:hover {
+    background: var(--purple-deep);
+}
+
+.home-db-icon {
+    width: 14px;
+    height: 14px;
+    fill: #fff;
+}

@@ -121,3 +121,48 @@ The default servers.js ships with 9 working embed providers verified in
 October 2026: viduki (x3 slots incl. multi-language + premium), vidy.st,
 vidfast.pro, vidlink.pro, vidrock.to, vidzee, and tvserver-1. Full https://
 URLs are used so the app never has to guess the scheme.
+
+## Home page layout (layout.conf)
+
+The home page is configured in `layout.conf`: one section per line, top to
+bottom. If the file is missing, the site falls back to a built-in order.
+
+Section types:
+
+- `super_featured` - the hero carousel
+- `continue_watching` - the continue watching row
+- `recommended_row` - recommended picks, as a row
+- `recent_row` / `recent_group` - the 14 newest releases (new movie
+  releases plus shows with a fresh episode in the last 20 days)
+- `featured_row` - every featured title in one horizontal row with the
+  two < > arrows
+- `featured_group` - every featured title as a wrapping grid
+- `top{N}_group` - the N highest rated titles on TMDB (e.g. `top21_group`);
+  any number works
+- `database_button` - "Can't find something?" strip with a Search Database
+  button that links to database.html
+- `backtotop` - "Couldn't find anything?" strip that smooth-scrolls to top
+- `custom/{id}` - a custom section defined at the bottom of the file:
+
+```
+[custom/halloween]
+title: Halloween & Horror
+type: row
+content: 1339713.movie, 66732.tv, 694.movie
+```
+
+`content` is a comma-separated list of TMDB ids as `{id}.movie` or `{id}.tv`.
+`type` is `row` (arrow-scrolled strip) or `group` (wrapping grid).
+
+Each section type renders at most once; unknown lines are ignored.
+
+## Poster flags (showFlags in instance host)
+
+`showFlags` in instance-host-data.js controls the small pills in the
+top-right corner of each poster. Options:
+
+- `recent` - new episode or release within the last 20 days
+- `featured` - in this instance's featured list
+- `acclaimed` - rating of 8.0+ on TMDB
+
+Use an empty list `[]` to hide them all.

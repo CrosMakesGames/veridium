@@ -187,6 +187,11 @@ function loadHostData() {
                 customFaviconLink: data.customFaviconLink || data['custom-favicon-link'] || '',
                 customColorScheme: data.customColorScheme || data['custom-colorscheme'] || '',
                 footerLinks: normalizeFooterLinks(data.footerLinks),
+                showFlags: Array.isArray(data.showFlags)
+                    ? data.showFlags.filter(function (f) {
+                        return ['recent', 'featured', 'acclaimed'].indexOf(f) !== -1;
+                    })
+                    : ['recent', 'featured', 'acclaimed'],
                 featuredShows: (data.featuredShows || [])
                     .filter(item => item && item.id && (item.type === 'tv' || item.type === 'movie'))
             };
@@ -387,10 +392,60 @@ function showUrl(id, type, season, episode) {
     return url;
 }
 
+// ============ POSTER FLAGS ("showFlags" in instance host) ============
+// Small pills in the top-right corner of every poster.
+//   recent    - new episode or release within the last 20 days
+//   featured  - in this instance's featured list
+//   acclaimed - high rating on TMDB
+const ACCLAIMED_MIN_RATING = 8;
+const RECENT_WINDOW_DAYS = 20;
+
+function enabledShowFlags() {
+    const hd = window.__veridiumHostData;
+    if (!hd || !Array.isArray(hd.showFlags)) return ['recent', 'featured', 'acclaimed'];
+    return hd.showFlags;
+}
+
+function isInFeaturedList(item) {
+    const hd = window.__veridiumHostData;
+    if (!hd || !Array.isArray(hd.featuredShows) || !item) return false;
+    const id = Number(item.id), type = item.type;
+    return hd.featuredShows.some(function (f) {
+        return Number(f.id) === id && f.type === type;
+    });
+}
+
+function isRecentRelease(item) {
+    if (!item) return false;
+    const date = (item.type === 'tv' && item.lastAirDate) ? item.lastAirDate : (item.releaseDate || '');
+    const parsed = parseReleaseDate(date);
+    if (!parsed) return false;
+    const days = (Date.now() - parsed.getTime()) / 86400000;
+    return days >= -1 && days <= RECENT_WINDOW_DAYS;
+}
+
+function isAcclaimed(item) {
+    return !!(item && item.rating && Number(item.rating) >= ACCLAIMED_MIN_RATING);
+}
+
+function posterFlagsHtml(item) {
+    const enabled = enabledShowFlags();
+    if (!enabled.length || !item || !item.id) return '';
+    const flags = [];
+    if (enabled.indexOf('recent') !== -1 && isRecentRelease(item)) flags.push('recent');
+    if (enabled.indexOf('featured') !== -1 && isInFeaturedList(item)) flags.push('featured');
+    if (enabled.indexOf('acclaimed') !== -1 && isAcclaimed(item)) flags.push('acclaimed');
+    if (!flags.length) return '';
+    return '<div class="poster-flags">' + flags.map(function (f) {
+        return '<span class="poster-flag poster-flag-' + f + '">' + f.toUpperCase() + '</span>';
+    }).join('') + '</div>';
+}
+
 function posterCard(item) {
     const upcoming = !!(item && item.upcoming);
     return '<a class="poster-card' + (upcoming ? ' poster-upcoming' : '') + '" href="' + showUrl(item.id, item.type) + '">' +
         '<img src="' + escapeHtml(item.poster) + '" loading="lazy" alt="" onerror=\'this.onerror=null;this.src=' + JSON.stringify(POSTER_FALLBACK) + ';\'>' +
+        posterFlagsHtml(item) +
         (upcoming ? '<span class="poster-upcoming-badge">UPCOMING</span>' : '') +
         '</a>';
 }
@@ -424,7 +479,7 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
 
 // TMDB details cache: the featured list is static, so after one good load
 // every page visit is instant and costs zero API calls (no rate-limit storms).
-const TMDB_CACHE_PREFIX = 'veridium_show_v4:';
+const TMDB_CACHE_PREFIX = 'veridium_show_v5:';
 const TMDB_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 function readShowCache(id, type) {
@@ -567,6 +622,7 @@ const ShowService = {
             collectionName: (data.belongs_to_collection && data.belongs_to_collection.name) || '',
             releaseDate: data.release_date || data.first_air_date || '',
             hasAired: type === 'tv' ? !!(data.last_episode_to_air && data.last_episode_to_air.air_date) : false,
+            lastAirDate: (data.last_episode_to_air && data.last_episode_to_air.air_date) || '',
             nextAirDate: (data.next_episode_to_air && data.next_episode_to_air.air_date) || '',
             nextAir: (data.next_episode_to_air && data.next_episode_to_air.air_date) ? {
                 season: data.next_episode_to_air.season_number,
@@ -1266,35 +1322,397 @@ async function renderHeroSelection(container, featured) {
 }
 
 
-async function initHome() {
-    const cwSection = document.getElementById('continue-watching-section');
-    const cwGrid = document.getElementById('continue-watching-grid');
-    const recSection = document.getElementById('recommended-section');
-    const recGrid = document.getElementById('recommended-home-grid');
-    const featuredGrid = document.getElementById('featured-grid');
+// ============ HOME PAGE LAYOUT (layout.conf) ============
+// The home page is built from layout.conf: one section per line, top to
+// bottom. Rows are horizontal strips with the two < > arrows; groups are
+// wrapping grids. If layout.conf can't be loaded the page falls back to a
+// built-in order, so the site never renders empty.
+const HOME_ROW_PAGE_SIZE = 7;
+const RECENT_DEFAULT_COUNT = 14;
+const LAYOUT_SECTION_TYPES = [
+    'super_featured', 'continue_watching', 'recommended_row', 'recent_row',
+    'recent_group', 'featured_row', 'featured_group', 'database_button', 'backtotop'
+];
+const LAYOUT_FALLBACK = ['super_featured', 'continue_watching', 'recommended_row', 'featured_group'];
 
-    try {
-        const history = await backfillHistoryGenres(loadHistory());
-        renderContinueWatchingSection(history);
-        if (history.length && recSection && recGrid) {
-            const picks = await fetchHomeRecommended(history);
-            if (picks.length) {
-                recSection.style.display = '';
-                renderRecommendedSection(picks, recGrid);
+function isLayoutSectionToken(token) {
+    return LAYOUT_SECTION_TYPES.indexOf(token) !== -1 ||
+        /^top\d+_group$/.test(token) ||
+        /^custom\/[a-z0-9_-]+$/.test(token);
+}
+
+function parseLayoutConf(text) {
+    const layout = { sections: [], customs: {} };
+    let currentCustom = null;
+    String(text || '').split(/\r?\n/).forEach(function (rawLine) {
+        const line = rawLine.trim();
+        if (!line || line.charAt(0) === '#') return;
+        const customMatch = /^\[custom\/([a-z0-9_-]+)\]$/i.exec(line);
+        if (customMatch) {
+            const id = customMatch[1].toLowerCase();
+            currentCustom = { id: id, title: '', type: 'row', content: [] };
+            layout.customs[id] = currentCustom;
+            return;
+        }
+        if (currentCustom && !isLayoutSectionToken(line.toLowerCase())) {
+            const kv = /^([a-z]+)\s*:\s*(.*)$/i.exec(line);
+            if (kv) {
+                const key = kv[1].toLowerCase(), value = kv[2].trim();
+                if (key === 'title') currentCustom.title = value;
+                else if (key === 'type') currentCustom.type = value.toLowerCase() === 'group' ? 'group' : 'row';
+                else if (key === 'content') {
+                    currentCustom.content = value.split(',').map(function (entry) {
+                        const m = /^\s*(\d+)\s*\.\s*(movie|tv)\s*$/i.exec(entry);
+                        return m ? { id: parseInt(m[1], 10), type: m[2].toLowerCase() } : null;
+                    }).filter(Boolean);
+                }
             }
+            return;
         }
-        const featured = await ShowService.fetchFeatured();
-        const heroContainer = document.getElementById('hero-container');
-        if (heroContainer) {
-            await renderHeroSelection(heroContainer, featured);
-        }
-        if (featuredGrid) {
-            if (featured.length) renderGrid(featuredGrid, featured);
-            else featuredGrid.innerHTML = '<div class="ad-warning">Failed to load content. Refresh the page.</div>';
-        }
+        const token = line.toLowerCase();
+        if (isLayoutSectionToken(token)) layout.sections.push(token);
+    });
+    return layout;
+}
+
+let layoutConfPromise = null;
+function loadLayoutConf() {
+    if (!layoutConfPromise) {
+        layoutConfPromise = (async function () {
+            let text = '';
+            // Embed/override hook (also used by self-contained test builds):
+            if (typeof window.__VERIDIUM_LAYOUT_CONF === 'string' && window.__VERIDIUM_LAYOUT_CONF.trim()) {
+                text = window.__VERIDIUM_LAYOUT_CONF;
+            } else {
+                try {
+                    const res = await fetch('layout.conf', { cache: 'no-cache' });
+                    if (res.ok) text = await res.text();
+                } catch (err) { /* fall back to the built-in order */ }
+            }
+            const layout = parseLayoutConf(text);
+            if (!layout.sections.length) layout.sections = LAYOUT_FALLBACK.slice();
+            return layout;
+        })();
+    }
+    return layoutConfPromise;
+}
+
+// Recent releases: newest movie releases + shows with a fresh episode,
+// newest first. Cached for 12 hours so repeat visits cost nothing.
+const RECENT_CACHE_PREFIX = 'veridium_recent_v1:';
+const RECENT_CACHE_TTL = 12 * 60 * 60 * 1000;
+
+function readRecentCache(count) {
+    try {
+        const raw = localStorage.getItem(RECENT_CACHE_PREFIX + count);
+        if (!raw) return null;
+        const entry = JSON.parse(raw);
+        if (!entry || !entry.t || Date.now() - entry.t > RECENT_CACHE_TTL) return null;
+        return entry.d || null;
     } catch (err) {
-        if (featuredGrid) {
-            featuredGrid.innerHTML = '<div class="ad-warning">Failed to load content. Refresh the page.</div>';
+        return null;
+    }
+}
+
+function writeRecentCache(count, items) {
+    if (!items) return;
+    try {
+        localStorage.setItem(RECENT_CACHE_PREFIX + count, JSON.stringify({ t: Date.now(), d: items }));
+    } catch (err) {}
+}
+
+async function fetchRecentReleases(limit) {
+    limit = limit || RECENT_DEFAULT_COUNT;
+    const cached = readRecentCache(limit);
+    if (cached && cached.length) return cached;
+
+    const sinceStr = new Date(Date.now() - RECENT_WINDOW_DAYS * 86400000).toISOString().slice(0, 10);
+    const tvCutoff = Date.now() - (RECENT_WINDOW_DAYS + 1) * 86400000;
+
+    const movieProm = fetch(TMDB_BASE + '/discover/movie?api_key=' + TMDB_API_KEY +
+        '&primary_release_date.gte=' + sinceStr + '&sort_by=primary_release_date.desc&vote_count.gte=10&include_adult=false&page=1')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            return (d.results || []).map(function (m) {
+                return normalizeTMDB(Object.assign({}, m, { media_type: 'movie' }));
+            }).filter(Boolean);
+        })
+        .catch(function () { return []; });
+
+    const tvProm = (async function () {
+        const trending = await ShowService.fetchTrending().catch(function () { return []; });
+        const candidates = trending.filter(function (i) { return i.type === 'tv' && !i.upcoming; }).slice(0, 26);
+        const details = [];
+        for (let i = 0; i < candidates.length; i += 6) {
+            if (i) await sleep(70);
+            const chunk = await Promise.all(candidates.slice(i, i + 6).map(function (c) {
+                return ShowService.getDetails(c.id, 'tv').catch(function () { return null; });
+            }));
+            details.push(...chunk);
+        }
+        return details.filter(function (d) {
+            if (!d) return false;
+            const date = parseReleaseDate(d.lastAirDate || d.releaseDate);
+            return date && date.getTime() >= tvCutoff;
+        });
+    })();
+
+    const [movies, tvShows] = await Promise.all([movieProm, tvProm]);
+    const byNewest = {};
+    movies.forEach(function (m) {
+        const t = parseReleaseDate(m.releaseDate);
+        if (t) byNewest['movie:' + m.id] = { item: m, t: t.getTime() };
+    });
+    tvShows.forEach(function (s) {
+        const t = parseReleaseDate(s.lastAirDate || s.releaseDate);
+        if (t) byNewest['tv:' + s.id] = { item: s, t: t.getTime() };
+    });
+    const list = Object.keys(byNewest).map(function (k) { return byNewest[k]; })
+        .sort(function (a, b) { return b.t - a.t; })
+        .map(function (e) { return e.item; })
+        .slice(0, limit);
+    if (list.length) writeRecentCache(limit, list);
+    return list;
+}
+
+// Top rated: the N highest rated titles on TMDB (movies + shows).
+const TOP_CACHE_PREFIX = 'veridium_toprated_v1:';
+const TOP_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+function readTopCache(count) {
+    try {
+        const raw = localStorage.getItem(TOP_CACHE_PREFIX + count);
+        if (!raw) return null;
+        const entry = JSON.parse(raw);
+        if (!entry || !entry.t || Date.now() - entry.t > TOP_CACHE_TTL) return null;
+        return entry.d || null;
+    } catch (err) {
+        return null;
+    }
+}
+
+function writeTopCache(count, items) {
+    if (!items) return;
+    try {
+        localStorage.setItem(TOP_CACHE_PREFIX + count, JSON.stringify({ t: Date.now(), d: items }));
+    } catch (err) {}
+}
+
+async function fetchTopRated(count) {
+    const cached = readTopCache(count);
+    if (cached && cached.length) return cached;
+    const req = function (type) {
+        return fetch(TMDB_BASE + '/discover/' + type + '?api_key=' + TMDB_API_KEY +
+            '&sort_by=vote_average.desc&vote_count.gte=300&include_adult=false&page=1')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                return (d.results || []).map(function (raw) {
+                    return normalizeTMDB(Object.assign({}, raw, { media_type: type }));
+                }).filter(Boolean);
+            })
+            .catch(function () { return []; });
+    };
+    const [movies, tvShows] = await Promise.all([req('movie'), req('tv')]);
+    const list = movies.concat(tvShows)
+        .sort(function (a, b) { return Number(b.rating || 0) - Number(a.rating || 0); })
+        .slice(0, count);
+    if (list.length) writeTopCache(count, list);
+    return list;
+}
+
+// Custom sections load their content by TMDB id, in small staggered
+// batches like the featured list so TMDB's rate limit never trips.
+async function fetchCustomItems(def) {
+    const fetchItem = function (entry) {
+        return ShowService.getDetails(entry.id, entry.type).catch(function () { return null; });
+    };
+    const results = [];
+    const BATCH_SIZE = 8;
+    for (let i = 0; i < def.content.length; i += BATCH_SIZE) {
+        if (i) await sleep(60);
+        const chunk = await Promise.all(def.content.slice(i, i + BATCH_SIZE).map(fetchItem));
+        results.push(...chunk);
+    }
+    return results.filter(function (item) { return item && item.id; });
+}
+
+function buildHomeSectionShell(titleText, idSuffix) {
+    const section = document.createElement('section');
+    section.className = 'content-section';
+    section.id = 'home-section-' + idSuffix;
+    const head = document.createElement('div');
+    head.className = 'section-head';
+    if (titleText) {
+        const h2 = document.createElement('h2');
+        h2.className = 'section-heading';
+        h2.textContent = titleText;
+        head.appendChild(h2);
+    }
+    const pager = document.createElement('div');
+    pager.className = 'section-pager';
+    pager.id = 'home-pager-' + idSuffix;
+    head.appendChild(pager);
+    section.appendChild(head);
+    const grid = document.createElement('div');
+    grid.className = 'tv-grid';
+    grid.id = 'home-grid-' + idSuffix;
+    section.appendChild(grid);
+    return { section: section, grid: grid, pager: pager };
+}
+
+function renderPagedRow(state, items, grid, pager) {
+    const pageCount = Math.max(1, Math.ceil(items.length / HOME_ROW_PAGE_SIZE));
+    if (state.page > pageCount - 1) state.page = 0;
+    renderGrid(grid, items.slice(state.page * HOME_ROW_PAGE_SIZE, (state.page + 1) * HOME_ROW_PAGE_SIZE));
+    renderSectionPager(pager, state.page, pageCount, function (p) {
+        state.page = p;
+        renderPagedRow(state, items, grid, pager);
+    });
+}
+
+function buildDatabaseButton() {
+    const el = document.createElement('div');
+    el.className = 'home-db-button';
+    el.innerHTML =
+        '<span class="home-db-text">Can\'t find something?</span>' +
+        '<a class="home-db-link" href="database.html">' +
+            '<svg class="home-db-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+                '<path d="M10 2a8 8 0 105.29 15.04l4.84 4.84a1 1 0 001.41-1.41l-4.83-4.84A8 8 0 0010 2zm0 2a6 6 0 110 12 6 6 0 010-12z"/>' +
+            '</svg>' +
+            'Search Database</a>';
+    return el;
+}
+
+function buildBackToTop() {
+    const el = document.createElement('div');
+    el.className = 'home-back-to-top';
+    el.innerHTML =
+        '<span class="home-db-text">Couldn\'t find anything?</span>' +
+        '<a class="home-btt-link" href="javascript:void(0)">Back To Top</a>';
+    el.querySelector('.home-btt-link').addEventListener('click', function (e) {
+        e.preventDefault();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    return el;
+}
+
+async function renderHomeSection(root, token, layout, history, suffixCounter) {
+    if (token === 'super_featured') {
+        const hero = document.createElement('div');
+        hero.id = 'hero-container';
+        root.appendChild(hero);
+        const featured = await ShowService.fetchFeatured();
+        await renderHeroSelection(hero, featured);
+        return;
+    }
+    if (token === 'continue_watching') {
+        const shell = buildHomeSectionShell('CONTINUE WATCHING', 'cw');
+        shell.section.id = 'continue-watching-section';
+        shell.grid.id = 'continue-watching-grid';
+        shell.pager.id = 'cw-pager';
+        root.appendChild(shell.section);
+        renderContinueWatchingSection(history);
+        return;
+    }
+    if (token === 'recommended_row') {
+        const shell = buildHomeSectionShell('RECOMMENDED', 'rec');
+        shell.section.id = 'recommended-section';
+        shell.section.style.display = 'none';
+        shell.grid.id = 'recommended-home-grid';
+        shell.pager.id = 'rec-pager';
+        root.appendChild(shell.section);
+        const picks = await fetchHomeRecommended(history);
+        if (picks.length) {
+            shell.section.style.display = '';
+            renderRecommendedSection(picks, shell.grid);
+        }
+        return;
+    }
+    if (token === 'featured_row' || token === 'featured_group') {
+        const shell = buildHomeSectionShell('FEATURED', 'featured-' + (++suffixCounter.n));
+        root.appendChild(shell.section);
+        const items = await ShowService.fetchFeatured();
+        if (!items.length) {
+            shell.grid.innerHTML = '<div class="ad-warning">Failed to load content. Refresh the page.</div>';
+            return;
+        }
+        if (token === 'featured_row') renderPagedRow({ page: 0 }, items, shell.grid, shell.pager);
+        else renderGrid(shell.grid, items);
+        return;
+    }
+    if (token === 'recent_row' || token === 'recent_group') {
+        const shell = buildHomeSectionShell('NEW RELEASES', 'recent-' + (++suffixCounter.n));
+        root.appendChild(shell.section);
+        const items = await fetchRecentReleases(RECENT_DEFAULT_COUNT);
+        if (!items.length) {
+            shell.section.remove();
+            return;
+        }
+        if (token === 'recent_row') renderPagedRow({ page: 0 }, items, shell.grid, shell.pager);
+        else renderGrid(shell.grid, items);
+        return;
+    }
+    const topMatch = /^top(\d+)_group$/.exec(token);
+    if (topMatch) {
+        const count = Math.min(100, Math.max(1, parseInt(topMatch[1], 10) || 0));
+        const shell = buildHomeSectionShell('TOP ' + count, 'top-' + count);
+        root.appendChild(shell.section);
+        const items = await fetchTopRated(count);
+        if (!items.length) {
+            shell.grid.innerHTML = '<div class="ad-warning">Failed to load content. Refresh the page.</div>';
+            return;
+        }
+        renderGrid(shell.grid, items);
+        return;
+    }
+    if (token.indexOf('custom/') === 0) {
+        const id = token.slice('custom/'.length);
+        const def = layout.customs[id];
+        if (!def || !def.content.length) return;
+        const shell = buildHomeSectionShell(def.title || id.toUpperCase(), 'custom-' + id);
+        root.appendChild(shell.section);
+        const items = await fetchCustomItems(def);
+        if (!items.length) {
+            shell.section.remove();
+            return;
+        }
+        if (def.type === 'group') renderGrid(shell.grid, items);
+        else renderPagedRow({ page: 0 }, items, shell.grid, shell.pager);
+        return;
+    }
+    if (token === 'database_button') {
+        root.appendChild(buildDatabaseButton());
+        return;
+    }
+    if (token === 'backtotop') {
+        root.appendChild(buildBackToTop());
+        return;
+    }
+}
+
+async function initHome() {
+    // Build from layout.conf. If the page predates the layout engine (no
+    // #home-layout container), create one so the home page still renders.
+    let layoutRoot = document.getElementById('home-layout');
+    if (!layoutRoot) {
+        const container = document.querySelector('.content-container');
+        if (!container) return;
+        layoutRoot = document.createElement('div');
+        layoutRoot.id = 'home-layout';
+        container.appendChild(layoutRoot);
+    }
+    const layout = await loadLayoutConf();
+    const history = await backfillHistoryGenres(loadHistory()).catch(function () { return loadHistory(); });
+    const seen = {};
+    const suffixCounter = { n: 0 };
+    for (let i = 0; i < layout.sections.length; i++) {
+        const token = layout.sections[i];
+        if (seen[token]) continue; // each section type renders once
+        seen[token] = true;
+        try {
+            await renderHomeSection(layoutRoot, token, layout, history, suffixCounter);
+        } catch (err) {
+            // One broken section must never kill the rest of the page.
         }
     }
 }

@@ -10,9 +10,16 @@ window.VERIDIUM_HOST_DATA = {
     "topPoster": { "id": 1434, "type": "tv" },
 
     // 1 or more shows that are in the pin spot and shows rotates. 
-    "superFeaturedShows": [{ "id": 1339713, "type": "movie" },{"id": 1434, "type": "tv"}, {"id": 66732, "type": "tv"}, {"id": 1396, "type": "tv"},{ "id": 1405, "type": "tv" }, ],
+    "superFeaturedShows": [{ "id": 105248, "type": "tv" },{ "id": 1339713, "type": "movie" },{"id": 1434, "type": "tv"}, {"id": 66732, "type": "tv"}, {"id": 1396, "type": "tv"},{ "id": 1405, "type": "tv" }, ],
     // How often the hero advances, in milliseconds (8000 = every 8s, minimum 2000).
     "superFeaturedRotationMs": 8000,
+
+    // Poster flags: pills shown in the top-right corner of each poster.
+    // Options: "recent"     - new episode or release in the last 20 days
+    //          "featured"   - in this instance's featured list
+    //          "acclaimed"  - high TMDB rating
+    // Use an empty list [] to hide them all.
+    "showFlags": ["recent", "featured", "acclaimed"],
 
 
     // The font the INSTANCE HOST text uses in the footer.
