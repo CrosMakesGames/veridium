@@ -9,14 +9,14 @@
 
 window.VERIDIUM_SERVERS = [
     {
-        "title": "viduki-1",
-        "serverMovieLink": "https://www.viduki.net/1/movie/${movieId}",
-        "serverTvLink": "https://www.viduki.net/1/tv/${tvId}/${season}/${episode}"
-    },
-    {
         "title": "vidy.st",
         "serverMovieLink": "https://vidy.st/movie/${movieId}?overlay=true",
         "serverTvLink": "https://vidy.st/tv/${tvId}/${season}/${episode}?overlay=true&episodeSelector=false&nextEpisode=false&autoplayNextEpisode=false"
+    },
+    {
+        "title": "viduki-1",
+        "serverMovieLink": "https://www.viduki.net/1/movie/${movieId}",
+        "serverTvLink": "https://www.viduki.net/1/tv/${tvId}/${season}/${episode}"
     },
     {
         "title": "vidfast.pro",
