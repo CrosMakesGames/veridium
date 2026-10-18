@@ -14,11 +14,6 @@ window.VERIDIUM_SERVERS = [
         "serverTvLink": "https://vidy.st/tv/${tvId}/${season}/${episode}?overlay=true&episodeSelector=false&nextEpisode=false&autoplayNextEpisode=false"
     },
     {
-        "title": "viduki-1",
-        "serverMovieLink": "https://www.viduki.net/1/movie/${movieId}",
-        "serverTvLink": "https://www.viduki.net/1/tv/${tvId}/${season}/${episode}"
-    },
-    {
         "title": "vidfast.pro",
         "serverMovieLink": "https://vidfast.pro/movie/${movieId}?autoPlay=true&title=true&poster=true",
         "serverTvLink": "https://vidfast.pro/tv/${tvId}/${season}/${episode}?autoPlay=true&title=true&poster=true&nextButton=false&autoNext=false"
@@ -52,6 +47,11 @@ window.VERIDIUM_SERVERS = [
         "title": "tvserver-1",
         "serverMovieLink": "https://tvserver-1.crosmakesgames.com/embed/${movieId}",
         "serverTvLink": "https://tvserver-1.crosmakesgames.com/embed/${tvId}/${season}/${episode}"
+    },
+    {
+        "title": "viduki-1",
+        "serverMovieLink": "https://www.viduki.net/1/movie/${movieId}",
+        "serverTvLink": "https://www.viduki.net/1/tv/${tvId}/${season}/${episode}"
     },
     null
 ];
