@@ -16,16 +16,10 @@ const state = {
     serverIndex: 0
 };
 
-const SERVERS_FALLBACK = [
-    {
-        title: 'CMG Default',
-        serverMovieLink: 'tvserver-1.crosmakesgames.com/embed/${movieId}',
-        serverTvLink: 'tvserver-1.crosmakesgames.com/embed/${tvId}/${season}/${episode}'
-    }
-];
-
+// All server data lives in servers.js - there is no hardcoded fallback
+// here. If servers.js is missing or broken, the player shows a notice
+// pointing at it, so a bad edit is never silently masked by old data.
 const HOST_DATA_CACHE_KEY = 'veridium_host_data_cache_v1';
-const SERVERS_CACHE_KEY = 'veridium_servers_cache_v5';
 
 function readJSONCache(key) {
     try {
@@ -69,22 +63,12 @@ let serversPromise = null;
 function loadServers() {
     if (!serversPromise) {
         serversPromise = waitForGlobal('VERIDIUM_SERVERS', 'veridium-servers-ready', 3000).then(function () {
+            // Straight from servers.js, nothing cached: every edit to that
+            // file shows up in the selector on the very next page load.
             const raw = Array.isArray(window.VERIDIUM_SERVERS) ? window.VERIDIUM_SERVERS : [];
             const list = raw.filter(s => s && s.title && s.serverMovieLink && s.serverTvLink);
-            let finalList = null;
-            if (list.length) {
-                finalList = list;
-            } else {
-                // File didn't make it in time - fall back to the cached copy
-                // instead of breaking the player.
-                const cached = readJSONCache(SERVERS_CACHE_KEY);
-                const cachedList = (Array.isArray(cached) ? cached : [])
-                    .filter(s => s && s.title && s.serverMovieLink && s.serverTvLink);
-                if (cachedList.length) finalList = cachedList;
-            }
-            if (!finalList) finalList = SERVERS_FALLBACK;
-            window.__veridiumServers = finalList;
-            return finalList;
+            window.__veridiumServers = list;
+            return list;
         });
     }
     return serversPromise;
@@ -703,8 +687,8 @@ const ShowService = {
 };
 
 function getEmbedUrl(server, tmdbId, type, season, episode) {
-    const slot = server || SERVERS_FALLBACK[0];
-    if (!tmdbId) return '';
+    const slot = server;
+    if (!slot || !tmdbId) return '';
     if (type === 'movie') {
         return fillTemplate(slot.serverMovieLink, { movieId: tmdbId });
     }
@@ -1323,56 +1307,172 @@ async function renderHeroSelection(container, featured) {
 
 
 // ============ HOME PAGE LAYOUT (layout.conf) ============
-// The home page is built from layout.conf: one section per line, top to
-// bottom. Rows are horizontal strips with the two < > arrows; groups are
-// wrapping grids. If layout.conf can't be loaded the page falls back to a
-// built-in order, so the site never renders empty.
+// The home page is built from layout.conf, written like CSS: each block is
+// a section, blocks render top to bottom, and properties cascade:
+//   * { ... }        - defaults for every block (blocks override them)
+//   :root { rl: 7 }  - site-wide values. rl = row length: posters per row
+//                      on your screen. A size of 2rl = two rows' worth.
+// Section names: hero, continuewatching, recommended, featured, recent,
+// top, database, backtotop. Any other block name is a custom section and
+// takes title / display / size / content. An empty block = all defaults.
+// rl (row length = posters per row) is auto-detected per viewer's screen
+// from the live grid CSS, so 2rl means "two rows' worth" on any device.
+// If layout.conf can't be loaded the page falls back to a built-in order,
+// so the site never renders empty.
 const HOME_ROW_PAGE_SIZE = 7;
-const RECENT_DEFAULT_COUNT = 14;
-const LAYOUT_SECTION_TYPES = [
-    'super_featured', 'continue_watching', 'recommended_row', 'recent_row',
-    'recent_group', 'featured_row', 'featured_group', 'database_button', 'backtotop'
-];
-const LAYOUT_FALLBACK = ['super_featured', 'continue_watching', 'recommended_row', 'featured_group'];
+const DEFAULT_ROW_LENGTH = 7;
 
-function isLayoutSectionToken(token) {
-    return LAYOUT_SECTION_TYPES.indexOf(token) !== -1 ||
-        /^top\d+_group$/.test(token) ||
-        /^custom\/[a-z0-9_-]+$/.test(token);
+// Detect how many posters fit in one row on this viewer's screen: render a
+// hidden throwaway grid with the real .tv-grid CSS and count its columns.
+let detectedRowLength = null;
+function detectRowLength() {
+    if (detectedRowLength) return detectedRowLength;
+    try {
+        const host = document.getElementById('home-layout') ||
+            document.querySelector('.content-container') || document.body;
+        const probe = document.createElement('div');
+        probe.className = 'tv-grid';
+        probe.style.cssText = 'visibility:hidden;margin-top:0;';
+        for (let i = 0; i < 48; i++) probe.appendChild(document.createElement('div'));
+        host.appendChild(probe);
+        const cols = (getComputedStyle(probe).gridTemplateColumns || '')
+            .split(' ').filter(function (t) { return t && t !== '0px'; }).length;
+        host.removeChild(probe);
+        if (cols >= 1) {
+            detectedRowLength = Math.min(24, Math.max(1, cols));
+            return detectedRowLength;
+        }
+    } catch (err) { /* keep the default below */ }
+    detectedRowLength = DEFAULT_ROW_LENGTH;
+    return detectedRowLength;
+}
+const LAYOUT_FALLBACK = [
+    { type: 'super_featured' },
+    { type: 'continue_watching' },
+    { type: 'recommended', display: 'row' },
+    { type: 'featured', display: 'group' }
+];
+
+function canonSectionName(id) {
+    if (id === 'hero' || id === 'superfeatured' || id === 'super') return 'super_featured';
+    if (id === 'continuewatching' || id === 'cw') return 'continue_watching';
+    if (id === 'recommended' || id === 'recommendations') return 'recommended';
+    if (id === 'featured') return 'featured';
+    if (id === 'recent' || id === 'newreleases') return 'recent';
+    if (id === 'top' || id === 'toprated') return 'top';
+    if (id === 'database' || id === 'databasebutton' || id === 'search') return 'database_button';
+    if (id === 'backtotop' || id === 'btt') return 'backtotop';
+    return 'custom';
+}
+
+function parseConfProps(body) {
+    const props = {};
+    String(body || '').split(';').forEach(function (chunk) {
+        const idx = chunk.indexOf(':');
+        if (idx < 1) return;
+        const key = chunk.slice(0, idx).trim().toLowerCase().replace(/[^a-z-]/g, '');
+        const value = chunk.slice(idx + 1).trim();
+        if (key && value) props[key] = value;
+    });
+    return props;
+}
+
+// size takes a plain poster count (14) or rl units (2rl = 2 rows' worth).
+// rl sizes are stored raw and resolved against the viewer's detected row
+// length when the section renders.
+function parseConfSize(value) {
+    if (!value) return null;
+    const m = /^(\d+(?:\.\d+)?)(rl)?$/i.exec(String(value).trim());
+    if (!m) return null;
+    const n = parseFloat(m[1]);
+    if (!(n > 0 && n <= 200)) return null;
+    return { n: n, rl: !!m[2] };
+}
+
+function resolveConfSize(size, rl) {
+    if (!size) return null;
+    let n = size.rl ? size.n * rl : size.n;
+    n = Math.round(n);
+    return (n >= 1 && n <= 200) ? n : null;
+}
+
+function parseConfContent(value) {
+    return String(value || '').split(',').map(function (entry) {
+        const m = /^\s*(\d+)\s*\.\s*(movie|tv)\s*$/i.exec(entry);
+        return m ? { id: parseInt(m[1], 10), type: m[2].toLowerCase() } : null;
+    }).filter(Boolean);
 }
 
 function parseLayoutConf(text) {
-    const layout = { sections: [], customs: {} };
-    let currentCustom = null;
-    String(text || '').split(/\r?\n/).forEach(function (rawLine) {
-        const line = rawLine.trim();
-        if (!line || line.charAt(0) === '#') return;
-        const customMatch = /^\[custom\/([a-z0-9_-]+)\]$/i.exec(line);
-        if (customMatch) {
-            const id = customMatch[1].toLowerCase();
-            currentCustom = { id: id, title: '', type: 'row', content: [] };
-            layout.customs[id] = currentCustom;
-            return;
+    const out = { sections: [], customs: {}, rl: DEFAULT_ROW_LENGTH, rowPageSize: DEFAULT_ROW_LENGTH };
+    // Note: rl is auto-detected from the viewer's screen at load time
+    // (detectRowLength), not defined here. :root blocks are allowed and
+    // ignored so old files keep parsing.
+    let src = String(text || '')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')      /* CSS-style comments */
+        .replace(/(^|\n)\s*#[^\n]*/g, '\n');     /* # comments still tolerated */
+    const blocks = [];
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let m;
+    while ((m = re.exec(src))) {
+        m[1].split(',').forEach(function (rawName) {
+            const name = rawName.trim().toLowerCase();
+            if (!name) return;
+            blocks.push({ name: name, props: parseConfProps(m[2]) });
+        });
+    }
+    // Cascade pass: * sets defaults, named blocks override, order wins.
+    let starProps = {};
+    const seen = {};
+    for (let i = 0; i < blocks.length; i++) {
+        const blk = blocks[i];
+        if (blk.name === ':root') continue;
+        if (blk.name === '*') {
+            Object.keys(blk.props).forEach(function (k) { starProps[k] = blk.props[k]; });
+            continue;
         }
-        if (currentCustom && !isLayoutSectionToken(line.toLowerCase())) {
-            const kv = /^([a-z]+)\s*:\s*(.*)$/i.exec(line);
-            if (kv) {
-                const key = kv[1].toLowerCase(), value = kv[2].trim();
-                if (key === 'title') currentCustom.title = value;
-                else if (key === 'type') currentCustom.type = value.toLowerCase() === 'group' ? 'group' : 'row';
-                else if (key === 'content') {
-                    currentCustom.content = value.split(',').map(function (entry) {
-                        const m = /^\s*(\d+)\s*\.\s*(movie|tv)\s*$/i.exec(entry);
-                        return m ? { id: parseInt(m[1], 10), type: m[2].toLowerCase() } : null;
-                    }).filter(Boolean);
-                }
+        const id = blk.name.replace(/[^a-z0-9_-]+/g, '');
+        if (!id) continue;
+        const canon = canonSectionName(id);
+        const props = {};
+        Object.keys(starProps).forEach(function (k) { props[k] = starProps[k]; });
+        Object.keys(blk.props).forEach(function (k) { props[k] = blk.props[k]; });
+        const display = String(props.display || '').toLowerCase() === 'group' ? 'group' : 'row';
+        const size = parseConfSize(props.size);
+        const title = props.title || '';
+        const content = parseConfContent(props.content);
+
+        if (canon === 'custom') {
+            const prev = out.customs[id];
+            if (prev) {
+                // A repeated name updates the earlier definition (cascade),
+                // but the section keeps its original position on the page.
+                out.customs[id] = {
+                    id: id,
+                    title: title || prev.title,
+                    display: blk.props.display !== undefined ? display : prev.display,
+                    size: blk.props.size !== undefined ? size : prev.size,
+                    content: content.length ? content : prev.content
+                };
+                continue;
             }
-            return;
+            if (!content.length) continue;
+            out.customs[id] = { id: id, title: title, display: display, size: size, content: content };
+            if (seen[canon + '/' + id]) continue;
+            seen[canon + '/' + id] = true;
+            out.sections.push({ type: canon, id: id });
+            continue;
         }
-        const token = line.toLowerCase();
-        if (isLayoutSectionToken(token)) layout.sections.push(token);
-    });
-    return layout;
+        if (seen[canon]) continue;
+        seen[canon] = true;
+        const section = { type: canon, display: display, size: size };
+        // Per-section defaults; the conf's own values always win.
+        if (props.display === undefined) section.display = (canon === 'top') ? 'group' : 'row';
+        if (canon === 'recent') section.size = size || { n: 2, rl: true };
+        if (canon === 'top') section.size = size || { n: 3, rl: true };
+        out.sections.push(section);
+    }
+    return out;
 }
 
 let layoutConfPromise = null;
@@ -1391,6 +1491,9 @@ function loadLayoutConf() {
             }
             const layout = parseLayoutConf(text);
             if (!layout.sections.length) layout.sections = LAYOUT_FALLBACK.slice();
+            // Auto-detect this viewer's row length (posters per row).
+            layout.rl = detectRowLength();
+            layout.rowPageSize = layout.rl;
             return layout;
         })();
     }
@@ -1422,7 +1525,7 @@ function writeRecentCache(count, items) {
 }
 
 async function fetchRecentReleases(limit) {
-    limit = limit || RECENT_DEFAULT_COUNT;
+    limit = limit || 14;
     const cached = readRecentCache(limit);
     if (cached && cached.length) return cached;
 
@@ -1560,13 +1663,14 @@ function buildHomeSectionShell(titleText, idSuffix) {
     return { section: section, grid: grid, pager: pager };
 }
 
-function renderPagedRow(state, items, grid, pager) {
-    const pageCount = Math.max(1, Math.ceil(items.length / HOME_ROW_PAGE_SIZE));
+function renderPagedRow(state, items, grid, pager, pageSize) {
+    const per = Math.max(1, pageSize || HOME_ROW_PAGE_SIZE);
+    const pageCount = Math.max(1, Math.ceil(items.length / per));
     if (state.page > pageCount - 1) state.page = 0;
-    renderGrid(grid, items.slice(state.page * HOME_ROW_PAGE_SIZE, (state.page + 1) * HOME_ROW_PAGE_SIZE));
+    renderGrid(grid, items.slice(state.page * per, (state.page + 1) * per));
     renderSectionPager(pager, state.page, pageCount, function (p) {
         state.page = p;
-        renderPagedRow(state, items, grid, pager);
+        renderPagedRow(state, items, grid, pager, per);
     });
 }
 
@@ -1596,8 +1700,8 @@ function buildBackToTop() {
     return el;
 }
 
-async function renderHomeSection(root, token, layout, history, suffixCounter) {
-    if (token === 'super_featured') {
+async function renderHomeSection(root, section, layout, history, suffixCounter) {
+    if (section.type === 'super_featured') {
         const hero = document.createElement('div');
         hero.id = 'hero-container';
         root.appendChild(hero);
@@ -1605,16 +1709,18 @@ async function renderHomeSection(root, token, layout, history, suffixCounter) {
         await renderHeroSelection(hero, featured);
         return;
     }
-    if (token === 'continue_watching') {
+    if (section.type === 'continue_watching') {
         const shell = buildHomeSectionShell('CONTINUE WATCHING', 'cw');
         shell.section.id = 'continue-watching-section';
         shell.grid.id = 'continue-watching-grid';
         shell.pager.id = 'cw-pager';
         root.appendChild(shell.section);
-        renderContinueWatchingSection(history);
+        const cwCount = resolveConfSize(section.size, layout.rl);
+        const cwHistory = cwCount ? history.slice(0, cwCount) : history;
+        renderContinueWatchingSection(cwHistory);
         return;
     }
-    if (token === 'recommended_row') {
+    if (section.type === 'recommended') {
         const shell = buildHomeSectionShell('RECOMMENDED', 'rec');
         shell.section.id = 'recommended-section';
         shell.section.style.display = 'none';
@@ -1622,39 +1728,44 @@ async function renderHomeSection(root, token, layout, history, suffixCounter) {
         shell.pager.id = 'rec-pager';
         root.appendChild(shell.section);
         const picks = await fetchHomeRecommended(history);
-        if (picks.length) {
+        if (!picks.length) return;
+        const recCount = resolveConfSize(section.size, layout.rl);
+        const items = recCount ? picks.slice(0, recCount) : picks;
+        if (items.length) {
             shell.section.style.display = '';
-            renderRecommendedSection(picks, shell.grid);
+            renderRecommendedSection(items, shell.grid);
         }
         return;
     }
-    if (token === 'featured_row' || token === 'featured_group') {
+    if (section.type === 'featured') {
         const shell = buildHomeSectionShell('FEATURED', 'featured-' + (++suffixCounter.n));
         root.appendChild(shell.section);
-        const items = await ShowService.fetchFeatured();
-        if (!items.length) {
+        const all = await ShowService.fetchFeatured();
+        if (!all.length) {
             shell.grid.innerHTML = '<div class="ad-warning">Failed to load content. Refresh the page.</div>';
             return;
         }
-        if (token === 'featured_row') renderPagedRow({ page: 0 }, items, shell.grid, shell.pager);
-        else renderGrid(shell.grid, items);
+        const featCount = resolveConfSize(section.size, layout.rl);
+        const items = featCount ? all.slice(0, featCount) : all;
+        if (section.display === 'group') renderGrid(shell.grid, items);
+        else renderPagedRow({ page: 0 }, items, shell.grid, shell.pager, layout.rowPageSize);
         return;
     }
-    if (token === 'recent_row' || token === 'recent_group') {
+    if (section.type === 'recent') {
         const shell = buildHomeSectionShell('NEW RELEASES', 'recent-' + (++suffixCounter.n));
         root.appendChild(shell.section);
-        const items = await fetchRecentReleases(RECENT_DEFAULT_COUNT);
+        const count = resolveConfSize(section.size, layout.rl) || 2 * layout.rl;
+        const items = await fetchRecentReleases(count);
         if (!items.length) {
             shell.section.remove();
             return;
         }
-        if (token === 'recent_row') renderPagedRow({ page: 0 }, items, shell.grid, shell.pager);
-        else renderGrid(shell.grid, items);
+        if (section.display === 'group') renderGrid(shell.grid, items);
+        else renderPagedRow({ page: 0 }, items, shell.grid, shell.pager, layout.rowPageSize);
         return;
     }
-    const topMatch = /^top(\d+)_group$/.exec(token);
-    if (topMatch) {
-        const count = Math.min(100, Math.max(1, parseInt(topMatch[1], 10) || 0));
+    if (section.type === 'top') {
+        const count = Math.min(100, Math.max(1, resolveConfSize(section.size, layout.rl) || 3 * layout.rl));
         const shell = buildHomeSectionShell('TOP ' + count, 'top-' + count);
         root.appendChild(shell.section);
         const items = await fetchTopRated(count);
@@ -1662,29 +1773,31 @@ async function renderHomeSection(root, token, layout, history, suffixCounter) {
             shell.grid.innerHTML = '<div class="ad-warning">Failed to load content. Refresh the page.</div>';
             return;
         }
-        renderGrid(shell.grid, items);
+        if (section.display === 'row') renderPagedRow({ page: 0 }, items, shell.grid, shell.pager, layout.rowPageSize);
+        else renderGrid(shell.grid, items);
         return;
     }
-    if (token.indexOf('custom/') === 0) {
-        const id = token.slice('custom/'.length);
-        const def = layout.customs[id];
+    if (section.type === 'custom') {
+        const def = layout.customs[section.id];
         if (!def || !def.content.length) return;
-        const shell = buildHomeSectionShell(def.title || id.toUpperCase(), 'custom-' + id);
+        const shell = buildHomeSectionShell(def.title || section.id.toUpperCase(), 'custom-' + section.id);
         root.appendChild(shell.section);
-        const items = await fetchCustomItems(def);
-        if (!items.length) {
+        const all = await fetchCustomItems(def);
+        if (!all.length) {
             shell.section.remove();
             return;
         }
-        if (def.type === 'group') renderGrid(shell.grid, items);
-        else renderPagedRow({ page: 0 }, items, shell.grid, shell.pager);
+        const custCount = resolveConfSize(def.size, layout.rl);
+        const items = custCount ? all.slice(0, custCount) : all;
+        if (def.display === 'group') renderGrid(shell.grid, items);
+        else renderPagedRow({ page: 0 }, items, shell.grid, shell.pager, layout.rowPageSize);
         return;
     }
-    if (token === 'database_button') {
+    if (section.type === 'database_button') {
         root.appendChild(buildDatabaseButton());
         return;
     }
-    if (token === 'backtotop') {
+    if (section.type === 'backtotop') {
         root.appendChild(buildBackToTop());
         return;
     }
@@ -1706,11 +1819,12 @@ async function initHome() {
     const seen = {};
     const suffixCounter = { n: 0 };
     for (let i = 0; i < layout.sections.length; i++) {
-        const token = layout.sections[i];
-        if (seen[token]) continue; // each section type renders once
-        seen[token] = true;
+        const section = layout.sections[i];
+        const key = section.type + (section.id ? '/' + section.id : '');
+        if (seen[key]) continue; // each section renders once
+        seen[key] = true;
         try {
-            await renderHomeSection(layoutRoot, token, layout, history, suffixCounter);
+            await renderHomeSection(layoutRoot, section, layout, history, suffixCounter);
         } catch (err) {
             // One broken section must never kill the rest of the page.
         }
@@ -1940,9 +2054,12 @@ function renderShowPage() {
     if (show.year) metaBits.push('<span>' + escapeHtml(show.year) + '</span>');
     if (!isMovie) metaBits.push('<span>' + escapeHtml(show.totalSeasons) + ' SEASONS</span>');
 
-    const serverOptions = window.__veridiumServers.map(function (slot, i) {
-        return '<option value="' + i + '"' + (i === state.serverIndex ? ' selected' : '') + '>' + escapeHtml(slot.title) + '</option>';
-    }).join('');
+    const serverCount = window.__veridiumServers.length;
+    const serverOptions = serverCount
+        ? window.__veridiumServers.map(function (slot, i) {
+            return '<option value="' + i + '"' + (i === state.serverIndex ? ' selected' : '') + '>' + escapeHtml(slot.title) + '</option>';
+        }).join('')
+        : '<option value="0">NO SERVERS - CHECK servers.js</option>';
 
     layout.innerHTML =
         '<a href="index.html" class="back-link">&lt; BACK</a>' +
@@ -1966,7 +2083,7 @@ function renderShowPage() {
                     '<button type="button" class="btn-secondary" onclick="playerOpenLink()">OPEN LINK</button>' +
                     '<div class="server-select-wrap">' +
                         '<span class="server-select-label"><b> Broken or Weird? -></b> </span>' +
-                        '<select id="server-select" class="server-select" onchange="switchServer(this.value)">' + serverOptions + '</select>' +
+                        '<select id="server-select" class="server-select"' + (serverCount ? ' onchange="switchServer(this.value)"' : ' disabled') + '>' + serverOptions + '</select>' +
                     '</div>' +
                 '</div>' +
 
@@ -2189,7 +2306,8 @@ async function renderRecommended(id, type) {
             return;
         }
     }
-    renderStrip(grid, items);
+    // Always two rows' worth of similar titles (2rl, auto-detected).
+    renderStrip(grid, items.slice(0, 2 * detectRowLength()));
 }
 
 // ============ COLLECTION (movie franchise) ============
