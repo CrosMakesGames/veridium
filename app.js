@@ -1021,7 +1021,9 @@ function renderContinueWatching(container, history) {
 // Shared renderer: shows the bar (or a clear warning) on any page that has it.
 const CW_PAGE_SIZE = 7;
 let cwPage = 0;
-const REC_STATE = { items: [], page: 0 };
+let cwPageSize = 0;
+const REC_STATE = { items: [], page: 0, per: 0 };
+
 
 function renderSectionPager(pagerEl, page, pageCount, nav) {
     if (!pagerEl) return;
@@ -1042,19 +1044,17 @@ function renderSectionPager(pagerEl, page, pageCount, nav) {
     mk('>', page + 1);
 }
 
-function renderRecommendedSection(items, grid) {
+function renderRecommendedSection(items, grid, pageSize) {
     const pager = document.getElementById('rec-pager');
     REC_STATE.items = items;
-    const pageCount = Math.max(1, Math.ceil(items.length / REC_PAGE_SIZE));
+    if (pageSize) REC_STATE.per = pageSize;
+    const per = REC_STATE.per || REC_PAGE_SIZE;
+    const pageCount = Math.max(1, Math.ceil(items.length / per));
     if (REC_STATE.page > pageCount - 1) REC_STATE.page = pageCount - 1;
-    renderGrid(grid, items.slice(REC_STATE.page * REC_PAGE_SIZE, REC_STATE.page * REC_PAGE_SIZE + REC_PAGE_SIZE));
-    renderSectionPager(pager, REC_STATE.page, pageCount, function (p) {
-        REC_STATE.page = p;
-        renderRecommendedSection(REC_STATE.items, grid);
-    });
+    renderGrid(grid, items.slice(REC_STATE.page * per, REC_STATE.page * per + per));
 }
 
-function renderContinueWatchingSection(history) {
+function renderContinueWatchingSection(history, pageSize) {
     const section = document.getElementById('continue-watching-section');
     const grid = document.getElementById('continue-watching-grid');
     if (!section || !grid) return;
@@ -1063,6 +1063,20 @@ function renderContinueWatchingSection(history) {
         grid.innerHTML = '<div class="ad-warning">Continue Watching is unavailable - this browser is blocking site storage.</div>';
         return;
     }
+    const pager = document.getElementById('cw-pager');
+    if (!history.length) { cwPage = 0; if (pager) pager.innerHTML = ''; return; }
+    if (pageSize) cwPageSize = pageSize;
+    const per = cwPageSize || CW_PAGE_SIZE;
+    section.style.display = '';
+    const pageCount = Math.max(1, Math.ceil(history.length / per));
+    if (cwPage > pageCount - 1) cwPage = pageCount - 1;
+    renderContinueWatching(grid, history.slice(cwPage * per, cwPage * per + per));
+    renderSectionPager(pager, cwPage, pageCount, function (p) {
+        cwPage = p;
+        renderContinueWatchingSection(loadHistory());
+    });
+}
+
     const pager = document.getElementById('cw-pager');
     if (!history.length) { cwPage = 0; if (pager) pager.innerHTML = ''; return; }
     section.style.display = '';
