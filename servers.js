@@ -7,8 +7,13 @@
 //
 // Viduki's 3 servers are back at the top (all verified working Oct 20 2026).
 // English dub by default and correct TMDB episode order.
-
+https://vidium.crosmakesgames.com/tv/105248/2/4
 window.VERIDIUM_SERVERS = [
+    {
+        "title": "vidium",
+        "serverMovieLink": "https://vidiumembed.crosmakesgames.com/movie/${movieId}",
+        "serverTvLink": "https://vidiumembed.crosmakesgames.com/tv/${tvId}/${season}/${episode}"
+    },
     {
         "title": "viduki-1",
         "serverMovieLink": "https://viduki.net/1/movie/${movieId}",
